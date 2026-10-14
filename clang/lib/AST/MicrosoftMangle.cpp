@@ -2173,7 +2173,13 @@ void MicrosoftCXXNameMangler::mangleTemplateArgValue(QualType T,
   }
 
   case APValue::Reflection:
-    llvm_unreachable("reflection arguments should be separately handled");
+    // A reflection value as a (structural) template argument, e.g. f<^^T>.
+    // mangleReflection already emits the leading 'M' and the trailing 'E',
+    // so it is self-delimiting; add the type only when the caller asks.
+    if (WithScalarType)
+      mangleType(T, SourceRange(), QMM_Escape);
+    mangleReflection(V);
+    return;
   }
 }
 
