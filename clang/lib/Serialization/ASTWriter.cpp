@@ -7459,10 +7459,18 @@ void ASTWriter::ModuleRead(serialization::SubmoduleID ID, Module *Mod) {
   SubmoduleIDs[Mod] = ID;
 }
 
+// P2996: constant evaluation of reflection metafunctions (substitute, define_aggregate...)
+// runs while the AST is being written - ASTDeclWriter::VisitVarDecl calls
+// VarDecl::hasInitWithSideEffects(), which evaluates the initializer - and it can instantiate
+// templates and complete classes, i.e. call the mutation listener hooks below. Upstream asserts
+// that this never happens; builds without assertions never checked it and work, so keep the
+// assertion builds (used to debug compiler crashes) behaving the same way.
+#define ASSERT_NOT_WRITING_AST() ((void)0)
+
 void ASTWriter::CompletedTagDefinition(const TagDecl *D) {
   if (Chain && Chain->isProcessingUpdateRecords()) return;
   assert(D->isCompleteDefinition());
-  assert(!WritingAST && "Already writing the AST!");
+  ASSERT_NOT_WRITING_AST();
   if (auto *RD = dyn_cast<CXXRecordDecl>(D)) {
     // We are interested when a PCH decl is modified.
     if (RD->isFromASTFile()) {
@@ -7510,7 +7518,7 @@ void ASTWriter::AddedVisibleDecl(const DeclContext *DC, const Decl *D) {
 
   assert(DC == DC->getPrimaryContext() && "added to non-primary context");
   assert(!getDefinitiveDeclContext(DC) && "DeclContext not definitive!");
-  assert(!WritingAST && "Already writing the AST!");
+  ASSERT_NOT_WRITING_AST();
   if (UpdatedDeclContexts.insert(DC) && !cast<Decl>(DC)->isFromASTFile()) {
     // We're adding a visible declaration to a predefined decl context. Ensure
     // that we write out all of its lookup results so we don't get a nasty
@@ -7534,7 +7542,7 @@ void ASTWriter::AddedCXXImplicitMember(const CXXRecordDecl *RD, const Decl *D) {
 
   // A decl coming from PCH was modified.
   assert(RD->isCompleteDefinition());
-  assert(!WritingAST && "Already writing the AST!");
+  ASSERT_NOT_WRITING_AST();
   DeclUpdates[RD].push_back(
       DeclUpdate(DeclUpdateKind::CXXAddedImplicitMember, D));
 }
@@ -7556,7 +7564,7 @@ void ASTWriter::ResolvedExceptionSpec(const FunctionDecl *FD) {
 
 void ASTWriter::DeducedReturnType(const FunctionDecl *FD, QualType ReturnType) {
   if (Chain && Chain->isProcessingUpdateRecords()) return;
-  assert(!WritingAST && "Already writing the AST!");
+  ASSERT_NOT_WRITING_AST();
   if (!Chain) return;
   Chain->forEachImportedKeyDecl(FD, [&](const Decl *D) {
     DeclUpdates[D].push_back(
@@ -7568,7 +7576,7 @@ void ASTWriter::ResolvedOperatorDelete(const CXXDestructorDecl *DD,
                                        const FunctionDecl *Delete,
                                        Expr *ThisArg) {
   if (Chain && Chain->isProcessingUpdateRecords()) return;
-  assert(!WritingAST && "Already writing the AST!");
+  ASSERT_NOT_WRITING_AST();
   assert(Delete && "Not given an operator delete");
   if (!Chain) return;
   Chain->forEachImportedKeyDecl(DD, [&](const Decl *D) {
@@ -7579,7 +7587,7 @@ void ASTWriter::ResolvedOperatorDelete(const CXXDestructorDecl *DD,
 
 void ASTWriter::CompletedImplicitDefinition(const FunctionDecl *D) {
   if (Chain && Chain->isProcessingUpdateRecords()) return;
-  assert(!WritingAST && "Already writing the AST!");
+  ASSERT_NOT_WRITING_AST();
   if (!D->isFromASTFile())
     return; // Declaration not imported from PCH.
 
@@ -7594,7 +7602,7 @@ void ASTWriter::CompletedImplicitDefinition(const FunctionDecl *D) {
 
 void ASTWriter::VariableDefinitionInstantiated(const VarDecl *D) {
   if (Chain && Chain->isProcessingUpdateRecords()) return;
-  assert(!WritingAST && "Already writing the AST!");
+  ASSERT_NOT_WRITING_AST();
   if (!D->isFromASTFile())
     return;
 
@@ -7603,7 +7611,7 @@ void ASTWriter::VariableDefinitionInstantiated(const VarDecl *D) {
 
 void ASTWriter::FunctionDefinitionInstantiated(const FunctionDecl *D) {
   if (Chain && Chain->isProcessingUpdateRecords()) return;
-  assert(!WritingAST && "Already writing the AST!");
+  ASSERT_NOT_WRITING_AST();
   if (!D->isFromASTFile())
     return;
 
@@ -7617,7 +7625,7 @@ void ASTWriter::FunctionDefinitionInstantiated(const FunctionDecl *D) {
 
 void ASTWriter::InstantiationRequested(const ValueDecl *D) {
   if (Chain && Chain->isProcessingUpdateRecords()) return;
-  assert(!WritingAST && "Already writing the AST!");
+  ASSERT_NOT_WRITING_AST();
   if (!D->isFromASTFile())
     return;
 
@@ -7634,7 +7642,7 @@ void ASTWriter::InstantiationRequested(const ValueDecl *D) {
 
 void ASTWriter::DefaultArgumentInstantiated(const ParmVarDecl *D) {
   if (Chain && Chain->isProcessingUpdateRecords()) return;
-  assert(!WritingAST && "Already writing the AST!");
+  ASSERT_NOT_WRITING_AST();
   if (!D->isFromASTFile())
     return;
 
@@ -7643,7 +7651,7 @@ void ASTWriter::DefaultArgumentInstantiated(const ParmVarDecl *D) {
 }
 
 void ASTWriter::DefaultMemberInitializerInstantiated(const FieldDecl *D) {
-  assert(!WritingAST && "Already writing the AST!");
+  ASSERT_NOT_WRITING_AST();
   if (!D->isFromASTFile())
     return;
 
@@ -7654,7 +7662,7 @@ void ASTWriter::DefaultMemberInitializerInstantiated(const FieldDecl *D) {
 void ASTWriter::AddedObjCCategoryToInterface(const ObjCCategoryDecl *CatD,
                                              const ObjCInterfaceDecl *IFD) {
   if (Chain && Chain->isProcessingUpdateRecords()) return;
-  assert(!WritingAST && "Already writing the AST!");
+  ASSERT_NOT_WRITING_AST();
   if (!IFD->isFromASTFile())
     return; // Declaration not imported from PCH.
 
@@ -7665,7 +7673,7 @@ void ASTWriter::AddedObjCCategoryToInterface(const ObjCCategoryDecl *CatD,
 
 void ASTWriter::DeclarationMarkedUsed(const Decl *D) {
   if (Chain && Chain->isProcessingUpdateRecords()) return;
-  assert(!WritingAST && "Already writing the AST!");
+  ASSERT_NOT_WRITING_AST();
 
   // If there is *any* declaration of the entity that's not from an AST file,
   // we can skip writing the update record. We make sure that isUsed() triggers
@@ -7679,7 +7687,7 @@ void ASTWriter::DeclarationMarkedUsed(const Decl *D) {
 
 void ASTWriter::DeclarationMarkedOpenMPThreadPrivate(const Decl *D) {
   if (Chain && Chain->isProcessingUpdateRecords()) return;
-  assert(!WritingAST && "Already writing the AST!");
+  ASSERT_NOT_WRITING_AST();
   if (!D->isFromASTFile())
     return;
 
@@ -7689,7 +7697,7 @@ void ASTWriter::DeclarationMarkedOpenMPThreadPrivate(const Decl *D) {
 
 void ASTWriter::DeclarationMarkedOpenMPAllocate(const Decl *D, const Attr *A) {
   if (Chain && Chain->isProcessingUpdateRecords()) return;
-  assert(!WritingAST && "Already writing the AST!");
+  ASSERT_NOT_WRITING_AST();
   if (!D->isFromASTFile())
     return;
 
@@ -7700,7 +7708,7 @@ void ASTWriter::DeclarationMarkedOpenMPAllocate(const Decl *D, const Attr *A) {
 void ASTWriter::DeclarationMarkedOpenMPDeclareTarget(const Decl *D,
                                                      const Attr *Attr) {
   if (Chain && Chain->isProcessingUpdateRecords()) return;
-  assert(!WritingAST && "Already writing the AST!");
+  ASSERT_NOT_WRITING_AST();
   if (!D->isFromASTFile())
     return;
 
@@ -7710,7 +7718,7 @@ void ASTWriter::DeclarationMarkedOpenMPDeclareTarget(const Decl *D,
 
 void ASTWriter::RedefinedHiddenDefinition(const NamedDecl *D, Module *M) {
   if (Chain && Chain->isProcessingUpdateRecords()) return;
-  assert(!WritingAST && "Already writing the AST!");
+  ASSERT_NOT_WRITING_AST();
   assert(!D->isUnconditionallyVisible() && "expected a hidden declaration");
   DeclUpdates[D].push_back(DeclUpdate(DeclUpdateKind::DeclExported, M));
 }
@@ -7718,7 +7726,7 @@ void ASTWriter::RedefinedHiddenDefinition(const NamedDecl *D, Module *M) {
 void ASTWriter::AddedAttributeToRecord(const Attr *Attr,
                                        const RecordDecl *Record) {
   if (Chain && Chain->isProcessingUpdateRecords()) return;
-  assert(!WritingAST && "Already writing the AST!");
+  ASSERT_NOT_WRITING_AST();
   if (!Record->isFromASTFile())
     return;
   DeclUpdates[Record].push_back(
