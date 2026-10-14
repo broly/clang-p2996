@@ -26,6 +26,7 @@
 #include "clang/AST/GlobalDecl.h"
 #include "clang/AST/LocInfoType.h"
 #include "clang/AST/Mangle.h"
+#include "clang/AST/Reflection.h"
 #include "clang/AST/VTableBuilder.h"
 #include "clang/Basic/ABI.h"
 #include "clang/Basic/DiagnosticOptions.h"
@@ -2207,17 +2208,86 @@ void MicrosoftCXXNameMangler::mangleReflection(const APValue &R) {
     Context.mangleCanonicalTypeName(QT, Out, false);
     break;
   }
-  case ReflectionKind::Object:
+  case ReflectionKind::Object: {
+    Out << 'o';
+    QualType QT = R.getTypeOfReflectedResult(getASTContext());
+    if (!QT->isReferenceType())
+      QT = getASTContext().getLValueReferenceType(QT);
+    mangleTemplateArgValue(QT, R.getReflectedObject(),
+                           TplArgKind::StructuralValue,
+                           /*WithScalarType=*/true);
+    break;
+  }
   case ReflectionKind::Value:
-  case ReflectionKind::Declaration:
+    Out << 'v';
+    mangleTemplateArgValue(R.getTypeOfReflectedResult(getASTContext()),
+                           R.getReflectedValue(), TplArgKind::StructuralValue,
+                           /*WithScalarType=*/true);
+    break;
+  case ReflectionKind::Declaration: {
+    Out << 'd';
+    const ValueDecl *D = R.getReflectedDecl();
+    if (const auto *ED = dyn_cast<EnumConstantDecl>(D)) {
+      mangleType(ED->getType(), SourceRange(), QMM_Escape);
+      mangleNumber(ED->getInitVal());
+    } else {
+      if (const auto *CD = dyn_cast<CXXConstructorDecl>(D))
+        mangleName(GlobalDecl(CD, Ctor_Complete));
+      else if (const auto *DD = dyn_cast<CXXDestructorDecl>(D))
+        mangleName(GlobalDecl(DD, Dtor_Complete));
+      else
+        mangleName(D);
+      // The name alone does not tell overloads apart.
+      if (const auto *FD = dyn_cast<FunctionDecl>(D))
+        mangleType(FD->getType(), SourceRange(), QMM_Escape);
+    }
+    break;
+  }
+  case ReflectionKind::Parameter: {
+    Out << 'p';
+    const ParmVarDecl *PVD = R.getReflectedParameter();
+    mangleNumber(PVD->getFunctionScopeIndex());
+    if (const auto *FD = dyn_cast<FunctionDecl>(PVD->getDeclContext()))
+      mangleName(FD);
+    break;
+  }
   case ReflectionKind::Template:
+    Out << 'T';
+    mangleName(R.getReflectedTemplate().getAsTemplateDecl());
+    break;
   case ReflectionKind::Namespace:
+    Out << 'n';
+    // Otherwise this is the global namespace: nothing to add.
+    if (const auto *ND = dyn_cast<NamedDecl>(R.getReflectedNamespace()))
+      mangleName(ND);
+    break;
   case ReflectionKind::EntityProxy:
-  case ReflectionKind::Parameter:
+    Out << 'u';
+    mangleName(R.getReflectedEntityProxy());
+    break;
   case ReflectionKind::BaseSpecifier:
-  case ReflectionKind::DataMemberSpec:
+    Out << 'b';
+    mangleType(R.getReflectedBaseSpecifier()->getType(), SourceRange(),
+               QMM_Escape);
+    break;
+  case ReflectionKind::DataMemberSpec: {
+    Out << 'S';
+    const TagDataMemberSpec *TDMS = R.getReflectedDataMemberSpec();
+    mangleType(TDMS->Ty, SourceRange(), QMM_Escape);
+    if (TDMS->Name)
+      Out << "N$" << *TDMS->Name << '$';
+    if (TDMS->Alignment)
+      Out << 'A' << *TDMS->Alignment;
+    if (TDMS->BitWidth)
+      Out << 'B' << *TDMS->BitWidth;
+    break;
+  }
   case ReflectionKind::Annotation:
-    llvm_unreachable("unimplemented");
+  case ReflectionKind::EnumeratorSpec:
+  case ReflectionKind::Attribute:
+    // FIXME: no mangling defined yet; report instead of aborting the compiler.
+    Error("reflection of this kind as a template argument");
+    break;
   }
   Out << 'E';
 }
