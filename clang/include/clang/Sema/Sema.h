@@ -8295,7 +8295,16 @@ public:
   RecordDecl *StdSourceLocationImplDecl;
 
   /// A stack of expression evaluation contexts.
-  SmallVector<ExpressionEvaluationContextRecord, 8> ExprEvalContexts;
+  ///
+  /// NOTE(P2996): a std::deque, not a SmallVector: elements must keep their
+  /// address while the stack grows. PopExpressionEvaluationContext() holds a
+  /// reference to the top record while HandleImmediateInvocations() evaluates
+  /// constant expressions, and evaluating a reflection metafunction can
+  /// instantiate templates, i.e. push more contexts. With a vector that
+  /// reallocated and left the reference dangling (an intermittent access
+  /// violation in HandleImmediateInvocations). push_back / emplace_back /
+  /// pop_back on a deque never invalidate references to other elements.
+  std::deque<ExpressionEvaluationContextRecord> ExprEvalContexts;
 
   // Set of failed immediate invocations to avoid double diagnosing.
   llvm::SmallPtrSet<ConstantExpr *, 4> FailedImmediateInvocations;
