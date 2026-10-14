@@ -7727,7 +7727,13 @@ void ASTWriter::AddedAttributeToRecord(const Attr *Attr,
 
 void ASTWriter::AddedCXXTemplateSpecialization(
     const ClassTemplateDecl *TD, const ClassTemplateSpecializationDecl *D) {
-  assert(!WritingAST && "Already writing the AST!");
+  // P2996: constant evaluation of a reflection metafunction (e.g. substitute) can
+  // instantiate a specialization while the AST is being written, namely from
+  // VarDecl::hasInitWithSideEffects() in ASTDeclWriter::VisitVarDecl. The list of
+  // decls to emit is already consumed at that point, so there is nothing to
+  // record (builds without assertions silently ignored it already).
+  if (WritingAST)
+    return;
 
   if (!TD->getFirstDecl()->isFromASTFile())
     return;
@@ -7739,7 +7745,13 @@ void ASTWriter::AddedCXXTemplateSpecialization(
 
 void ASTWriter::AddedCXXTemplateSpecialization(
     const VarTemplateDecl *TD, const VarTemplateSpecializationDecl *D) {
-  assert(!WritingAST && "Already writing the AST!");
+  // P2996: constant evaluation of a reflection metafunction (e.g. substitute) can
+  // instantiate a specialization while the AST is being written, namely from
+  // VarDecl::hasInitWithSideEffects() in ASTDeclWriter::VisitVarDecl. The list of
+  // decls to emit is already consumed at that point, so there is nothing to
+  // record (builds without assertions silently ignored it already).
+  if (WritingAST)
+    return;
 
   if (!TD->getFirstDecl()->isFromASTFile())
     return;
@@ -7751,7 +7763,13 @@ void ASTWriter::AddedCXXTemplateSpecialization(
 
 void ASTWriter::AddedCXXTemplateSpecialization(const FunctionTemplateDecl *TD,
                                                const FunctionDecl *D) {
-  assert(!WritingAST && "Already writing the AST!");
+  // P2996: constant evaluation of a reflection metafunction (e.g. substitute) can
+  // instantiate a specialization while the AST is being written, namely from
+  // VarDecl::hasInitWithSideEffects() in ASTDeclWriter::VisitVarDecl. The list of
+  // decls to emit is already consumed at that point, so there is nothing to
+  // record (builds without assertions silently ignored it already).
+  if (WritingAST)
+    return;
 
   if (!TD->getFirstDecl()->isFromASTFile())
     return;
