@@ -82,7 +82,7 @@ static_assert(Version{2, 0} > Version{1, 9});
 
 // A metaclass that generates a getter for each data member.
 consteval void with_getters(info proto) {
-  string code = "public: ";
+  std::string code = "public: ";
   for (info m : members_of(proto, access_context::unchecked())) {
     if (!is_nonstatic_data_member(m))
       continue;
@@ -104,7 +104,8 @@ struct(plain_struct) Pod {
   int a;
   float b;
 };
-static_assert(std::is_trivial_v<Pod>);
+static_assert(std::is_trivially_copyable_v<Pod> &&
+              std::is_trivially_default_constructible_v<Pod>);
 
 int main(int, char**) {
   Square sq(3.0);
