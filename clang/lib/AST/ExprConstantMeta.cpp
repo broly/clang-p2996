@@ -7616,7 +7616,7 @@ bool set_member_access(APValue &Result, ASTContext &C, MetaActions &Meta,
     return Diagnoser(Range.getBegin(),
                      diag::metafn_injected_decl_non_plainly_consteval) << Range;
 
-  if (!Meta.SetMemberAccess(const_cast<Decl *>(RV.getReflectedDecl()),
+  if (!Meta.SetMemberAccess(RV.getReflectedDecl(),
                             static_cast<AccessSpecifier>(Access)))
     return Diagnoser(Range.getBegin(), diag::metafn_member_not_in_open_class)
         << DescriptionOf(RV) << Range;
