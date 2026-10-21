@@ -3725,7 +3725,10 @@ void Parser::ParseQueuedMemberInjections(Decl *TagDecl, unsigned TagType,
       SourceManager &SM = PP.getSourceManager();
       FileID FID = SM.createFileID(
           llvm::MemoryBuffer::getMemBufferCopy(Inj.Text, "<injected-members>"),
-          SrcMgr::C_User, /*LoadedID=*/0, /*LoadedOffset=*/0, Inj.Loc);
+          SrcMgr::C_User, /*LoadedID=*/0, /*LoadedOffset=*/0,
+          // The include location must be a local location (the injecting call
+          // may be in an imported module), so use that of the class.
+          Inj.Target->getLocation());
       llvm::MemoryBufferRef Buf = SM.getBufferOrFake(FID);
 
       SmallVector<Token, 32> Toks;
