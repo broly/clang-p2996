@@ -34,7 +34,7 @@ struct Tag {};
 struct Plain {
   consteval {
     queue_injection(^^{
-      int answer() const { return 42; }
+      constexpr int answer() const { return 42; }
       static constexpr int two = 2;
     });
   }
@@ -62,7 +62,7 @@ static_assert(Valued::value == 42);
 
 struct Ids {
   consteval {
-    queue_injection(^^{ int \id("get_", 7)() const { return 7; } });
+    queue_injection(^^{ constexpr int \id("get_", 7)() const { return 7; } });
     queue_injection(^^{ using \id(identifier_of(^^ns::Tag)) = int; });
   }
 };
