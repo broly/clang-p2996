@@ -80,6 +80,16 @@ struct Typed {
 };
 static_assert(std::is_same_v<Typed::type, ns::Tag>);
 
+struct Explicit;
+consteval void inject_into(info target) {
+  inject_members(target, ^^{ static constexpr int tag = \(7); using self = \(target); });
+}
+struct Explicit {
+  consteval { inject_into(^^Explicit); }
+};
+static_assert(Explicit::tag == 7);
+static_assert(std::is_same_v<Explicit::self, Explicit>);
+
                        // ===================
                        // \tokens composition
                        // ===================

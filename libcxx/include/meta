@@ -169,6 +169,7 @@ template <reflection_range R = initializer_list<info>>
 
 // metaclass support (class(M) C { ... }, see -fmetaclasses)
 consteval auto inject_members(info class_type, string_view code) -> void;
+consteval auto inject_members(info class_type, info token_sequence) -> void;
 consteval auto make_public(info member) -> void;
 consteval auto make_protected(info member) -> void;
 consteval auto make_private(info member) -> void;
@@ -2895,6 +2896,12 @@ consteval auto __ts_make(const Ts &...parts) -> info {
 
 consteval auto injection_target() -> info {
   return __metafunction(detail::__metafn_injection_target);
+}
+
+// Adds the declarations in 'token_sequence' to the class reflected by
+// 'class_type', which must be the class that is currently being defined.
+consteval auto inject_members(info class_type, info token_sequence) -> void {
+  inject_members(class_type, __ts_text_of(token_sequence));
 }
 
 // Adds the declarations in 'token_sequence' to the class that is currently
