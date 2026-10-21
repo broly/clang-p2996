@@ -339,6 +339,6 @@ static_assert(sizeof(MaterialUBO) == 32);
 static_assert(sizeof(LightUBO) == 16 + 16 + 128 + 16);
 
 int main(int, char**) {
-  assert(reflect::registered == 0);  // registrars are variables, not yet used
+  assert(reflect::registered == 4);  // one registrar per rh_type class
   return 0;
 }
