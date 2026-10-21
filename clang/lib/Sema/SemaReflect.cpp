@@ -622,6 +622,8 @@ public:
     if (!isOpenClass(Member->getDeclContext()))
       return false;
     Member->setAccess(AS);
+    if (isa<FieldDecl>(Member))
+      cast<CXXRecordDecl>(Member->getDeclContext())->noteFieldAccessChanged();
     if (auto *FD = dyn_cast<FunctionDecl>(Member))
       if (FunctionTemplateDecl *FTD = FD->getDescribedFunctionTemplate())
         FTD->setAccess(AS);

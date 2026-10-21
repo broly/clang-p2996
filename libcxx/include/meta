@@ -172,7 +172,8 @@ consteval auto inject_members(info class_type, string_view code) -> void;
 consteval auto make_public(info member) -> void;
 consteval auto make_protected(info member) -> void;
 consteval auto make_private(info member) -> void;
-consteval auto make_virtual(info member_function, bool pure = false) -> void;
+consteval auto make_virtual(info member_function) -> void;
+consteval auto make_virtual(info member_function, bool pure) -> void;
 consteval auto compiler_error(string_view message) -> void;
 consteval auto compiler_require(bool condition, string_view message) -> void;
 
@@ -2559,6 +2560,10 @@ consteval auto make_virtual(info member_function, bool pure) -> void {
   __metafunction(detail::__metafn_make_member_virtual, member_function, pure);
 }
 
+consteval auto make_virtual(info member_function) -> void {
+  make_virtual(member_function, false);
+}
+
 consteval auto compiler_error(string_view message) -> void {
   __metafunction(detail::__metafn_metaclass_requirement_failed,
                  message.data(), message.size());
@@ -2605,7 +2610,7 @@ consteval auto interface(info proto) -> void {
       compiler_error("an interface cannot declare constructors or assignment "
                      "operators");
     } else if (!is_static_member(m)) {
-      make_virtual(m, !is_defaulted(m) && !is_user_provided(m));
+      make_virtual(m, !is_defaulted(m) && !is_deleted(m));
     }
   }
 

@@ -793,6 +793,46 @@ void CXXRecordDecl::noteMethodMadeVirtual(const CXXMethodDecl *Method) {
   }
 }
 
+void CXXRecordDecl::noteFieldAccessChanged() {
+  assert(isBeingDefined() && "class is already complete");
+
+  data().HasPrivateFields = data().HasProtectedFields =
+      data().HasPublicFields = false;
+  bool OnlyTrivialFields = true;
+  for (const FieldDecl *FD : fields()) {
+    switch (FD->getAccess()) {
+    case AS_private:    data().HasPrivateFields = true;   break;
+    case AS_protected:  data().HasProtectedFields = true; break;
+    case AS_public:     data().HasPublicFields = true;    break;
+    case AS_none:       llvm_unreachable("Invalid access specifier");
+    }
+    QualType T = FD->getType();
+    if (T->isReferenceType())
+      OnlyTrivialFields = false;
+    else if (const CXXRecordDecl *FRD = T->getBaseElementTypeUnsafe()
+                                            ->getAsCXXRecordDecl())
+      if (!FRD->isStandardLayout())
+        OnlyTrivialFields = false;
+  }
+
+  bool NoNonPublicFields =
+      !data().HasPrivateFields && !data().HasProtectedFields;
+  bool Simple = getNumBases() == 0 && getNumVBases() == 0 && !isPolymorphic();
+
+  if (NoNonPublicFields) {
+    data().StructuralIfLiteral = true;
+    if (Simple && !hasUserDeclaredConstructor())
+      data().Aggregate = true;
+  }
+
+  if (Simple && OnlyTrivialFields &&
+      (data().HasPrivateFields + data().HasProtectedFields +
+       data().HasPublicFields) <= 1) {
+    data().IsStandardLayout = true;
+    data().IsCXX11StandardLayout = true;
+  }
+}
+
 void CXXRecordDecl::addedMember(Decl *D) {
   if (!D->isImplicit() && !isa<FieldDecl>(D) && !isa<IndirectFieldDecl>(D) &&
       (!isa<TagDecl>(D) ||

@@ -1912,6 +1912,14 @@ public:
   /// been added to this class (e.g., by a metaclass).
   void noteMethodMadeVirtual(const CXXMethodDecl *Method);
 
+  /// Updates the properties of this class that depend on the access of its
+  /// non-static data members, after the access of one of them was changed
+  /// while the class is being defined (e.g., by a metaclass).
+  ///
+  /// This is conservative: properties are only restored when no other
+  /// reason for losing them is known.
+  void noteFieldAccessChanged();
+
 private:
   void updateForVirtualMember();
 };

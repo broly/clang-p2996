@@ -86,8 +86,8 @@ consteval void with_getters(info proto) {
   for (info m : members_of(proto, access_context::unchecked())) {
     if (!is_nonstatic_data_member(m))
       continue;
-    code += "auto get_" + string(identifier_of(m)) + "() const { return " +
-            string(identifier_of(m)) + "; } ";
+    code += "auto get_" + std::string(identifier_of(m)) + "() const { return " +
+            std::string(identifier_of(m)) + "; } ";
   }
   inject_members(proto, code);
 }

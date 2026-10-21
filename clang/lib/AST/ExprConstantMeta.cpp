@@ -2575,16 +2575,17 @@ bool get_begin_member_decl_of(APValue &Result, ASTContext &C, MetaActions &Meta,
     if (!Meta.EnsureInstantiated(typeDecl, Range))
       return true;
 
-    if (QT->isIncompleteType())
+    // Members of a class that is still being defined can be iterated over
+    // only from within that class (e.g., by a metaclass being applied to it).
+    auto *OpenRD = dyn_cast<CXXRecordDecl>(typeDecl);
+    bool IsOpenClass = OpenRD && OpenRD->isBeingDefined() &&
+                       Meta.CurrentCtx() == OpenRD;
+    if (QT->isIncompleteType() && !IsOpenClass)
       return true;
-      // NOTE(P2996): Uncomment to allow 'members_of' within member
-      // specification.
-      /*
-      if (auto *TD = dyn_cast<TagDecl>(typeDecl); !TD || !TD->isBeingDefined())
-        return true;
-      */
 
-    if (auto *CXXRD = dyn_cast<CXXRecordDecl>(typeDecl))
+    // Don't declare implicit members before the class is complete; the
+    // members the metaclass sees are the ones that were written.
+    if (auto *CXXRD = dyn_cast<CXXRecordDecl>(typeDecl); CXXRD && !IsOpenClass)
       Meta.EnsureDeclarationOfImplicitMembers(CXXRD);
 
     DeclContext *declContext = dyn_cast<DeclContext>(typeDecl);
@@ -6943,6 +6944,14 @@ bool is_accessible(APValue &Result, ASTContext &C, MetaActions &Meta,
   APValue RV;
   if (!Evaluator(RV, Args[0], true))
     return true;
+
+  // Within a class that is being defined (e.g., by a metaclass being applied
+  // to it), all of its members are accessible.
+  if (RV.isReflectedDecl())
+    if (auto *OpenRD = dyn_cast<CXXRecordDecl>(
+            RV.getReflectedDecl()->getNonTransparentDeclContext());
+        OpenRD && OpenRD->isBeingDefined() && Meta.CurrentCtx() == OpenRD)
+      return SetAndSucceed(Result, makeBool(C, true));
 
   auto validate = [&](Decl *D, CXXRecordDecl *&NamingCls) -> bool {
     auto *DC = dyn_cast<CXXRecordDecl>(D->getNonTransparentDeclContext());
