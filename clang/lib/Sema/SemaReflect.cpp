@@ -2048,6 +2048,9 @@ Decl *Sema::BuildConstevalBlockDeclaration(SourceLocation ConstevalLoc,
                                            Expr *EvaluatingExpr) {
   Decl *Result = ConstevalBlockDecl::Create(Context, CurContext, ConstevalLoc,
                                             EvaluatingExpr);
+  // Members of a class must have an access (e.g., to be serialized).
+  if (isa<CXXRecordDecl>(CurContext))
+    Result->setAccess(AS_public);
   CurContext->addDecl(Result);
 
   if (!EvaluatingExpr->isTypeDependent() &&
@@ -2090,6 +2093,7 @@ bool Sema::ActOnMetaclassApplication(CXXRecordDecl *RD, Expr *MetaclassFn,
   Decl *Block = ConstevalBlockDecl::Create(Context, CurContext, Loc,
                                            Call.get());
   Block->setImplicit();
+  Block->setAccess(AS_public);
   CurContext->addDecl(Block);
 
   SmallVector<PartialDiagnosticAt, 4> Diags;
