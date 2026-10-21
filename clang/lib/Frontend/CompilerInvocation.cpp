@@ -613,7 +613,9 @@ static bool FixupInvocation(CompilerInvocation &Invocation,
   }
 
  if (!LangOpts.Reflection) {
-    if (LangOpts.ParameterReflection) {
+    if (LangOpts.Metaclasses) {
+      Diags.Report(diag::err_fe_metaclasses_without_reflection);
+    } else if (LangOpts.ParameterReflection) {
       Diags.Report(diag::err_fe_parameter_reflection_without_reflection);
     } else if (LangOpts.EntityProxyReflection) {
       Diags.Report(diag::err_fe_entity_proxy_reflection_without_reflection);

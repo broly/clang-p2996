@@ -7421,6 +7421,9 @@ void Clang::ConstructJob(Compilation &C, const JobAction &JA,
                     options::OPT_fno_annotation_attributes);
   Args.addOptInFlag(CmdArgs, options::OPT_fentity_proxy_reflection,
                     options::OPT_fno_entity_proxy_reflection);
+  // -fmetaclasses is likewise off by default.
+  Args.addOptInFlag(CmdArgs, options::OPT_fmetaclasses,
+                    options::OPT_fno_metaclasses);
   // -freflection-latest is likewise off by default.
   Args.addOptInFlag(CmdArgs, options::OPT_freflection_latest,
                     options::OPT_fno_reflection_latest);

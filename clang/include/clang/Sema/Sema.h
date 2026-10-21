@@ -15645,6 +15645,22 @@ public:
   Decl *ActOnConstevalBlockDeclaration(SourceLocation ConstevalLoc,
                                        Expr *EvaluatingExpr);
 
+  /// Source text of member declarations, injected into the class that is
+  /// currently being defined by a metafunction, which the parser has yet to
+  /// parse.
+  struct MemberInjection {
+    CXXRecordDecl *Target;
+    std::string Text;
+    SourceLocation Loc;
+  };
+  SmallVector<MemberInjection, 2> PendingMemberInjections;
+
+  /// Applies the metaclass function \p MetaclassFn (as in 'class(M) C { }') to
+  /// the class \p RD, which is just about to be completed. Returns 'true' on
+  /// success.
+  bool ActOnMetaclassApplication(CXXRecordDecl *RD, Expr *MetaclassFn,
+                                 SourceLocation Loc);
+
   // Reflection of non-expression operands.
   ExprResult BuildCXXReflectExpr(SourceLocation OperatorLoc,
                                  SourceLocation OperandLoc, QualType T);

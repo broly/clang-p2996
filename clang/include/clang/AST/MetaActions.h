@@ -20,6 +20,8 @@
 #include <clang/AST/TemplateBase.h>
 #include <clang/AST/Type.h>
 #include <clang/Basic/SourceLocation.h>
+#include <clang/Basic/Specifiers.h>
+#include <llvm/ADT/StringRef.h>
 #include <llvm/ADT/ArrayRef.h>
 #include <llvm/ADT/SmallVector.h>
 
@@ -28,6 +30,7 @@ namespace clang {
 class AttributeCommonInfo;
 class ConceptDecl;
 class CXXBasePath;
+class CXXMethodDecl;
 class CXXRecordDecl;
 class Decl;
 class DeclContext;
@@ -142,6 +145,22 @@ public:
                                  ArrayRef<TagDataMemberSpec *> MemberSpecs,
                                  Decl *ContainingDecl,
                                  SourceLocation DefinitionLoc) = 0;
+
+  // Queues the member declarations in 'Text' for injection into 'Target',
+  // which must be the class currently being defined. Returns 'false' if
+  // 'Target' is not such a class.
+  virtual bool QueueMemberInjection(CXXRecordDecl *Target, StringRef Text,
+                                    SourceLocation Loc) = 0;
+
+  // Changes the access of 'Member', a member of the class currently being
+  // defined, to 'AS'. Returns 'false' if 'Member' is not such a member.
+  virtual bool SetMemberAccess(Decl *Member, AccessSpecifier AS) = 0;
+
+  // Makes 'Method', a non-static member function of the class currently being
+  // defined, virtual (and pure, if 'Pure' is true). Returns 'false' if that
+  // is not possible.
+  virtual bool MakeMemberVirtual(CXXMethodDecl *Method, bool Pure,
+                                 SourceLocation Loc) = 0;
 
   // Appertains the value represented by 'Value' as an annotation of 'Decl'.
   virtual CXX26AnnotationAttr *Annotate(Decl *TargetDecl, const APValue &Value,

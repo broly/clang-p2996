@@ -167,6 +167,15 @@ consteval auto data_member_spec(info class_type,
 template <reflection_range R = initializer_list<info>>
   consteval auto define_aggregate(info class_type, R &&members) -> info;
 
+// metaclass support (class(M) C { ... }, see -fmetaclasses)
+consteval auto inject_members(info class_type, string_view code) -> void;
+consteval auto make_public(info member) -> void;
+consteval auto make_protected(info member) -> void;
+consteval auto make_private(info member) -> void;
+consteval auto make_virtual(info member_function, bool pure = false) -> void;
+consteval auto compiler_error(string_view message) -> void;
+consteval auto compiler_require(bool condition, string_view message) -> void;
+
 // data layout
 struct member_offset {
   ptrdiff_t bytes;
@@ -602,6 +611,12 @@ enum : unsigned {
 
   // P3867: define_encoded_static_string
   __metafn_define_encoded_static_string,
+
+  // Metaclass support
+  __metafn_inject_members,
+  __metafn_set_member_access,
+  __metafn_make_member_virtual,
+  __metafn_metaclass_requirement_failed,
 };
 
 consteval auto __workaround_expand_compiler_builtins(info type) -> info;
@@ -2515,6 +2530,127 @@ consteval auto define_aggregate(info class_type, R &&members) -> info {
                           vmembers.size(), vmembers.data());
   }
 }
+
+                          // ===================
+                          // Metaclass support
+                          // ===================
+
+// Parses 'code' as member declarations of the class reflected by 'class_type',
+// which must be the class that is currently being defined (e.g., the class
+// that a metaclass is being applied to), and adds them to that class.
+consteval auto inject_members(info class_type, string_view code) -> void {
+  __metafunction(detail::__metafn_inject_members, class_type, code.data(),
+                 code.size());
+}
+
+consteval auto make_public(info member) -> void {
+  __metafunction(detail::__metafn_set_member_access, member, 0);
+}
+
+consteval auto make_protected(info member) -> void {
+  __metafunction(detail::__metafn_set_member_access, member, 1);
+}
+
+consteval auto make_private(info member) -> void {
+  __metafunction(detail::__metafn_set_member_access, member, 2);
+}
+
+consteval auto make_virtual(info member_function, bool pure) -> void {
+  __metafunction(detail::__metafn_make_member_virtual, member_function, pure);
+}
+
+consteval auto compiler_error(string_view message) -> void {
+  __metafunction(detail::__metafn_metaclass_requirement_failed,
+                 message.data(), message.size());
+}
+
+consteval auto compiler_require(bool condition, string_view message) -> void {
+  if (!condition)
+    compiler_error(message);
+}
+
+                          // ===============================
+                          // Sample metaclasses (P0707-style)
+                          // ===============================
+
+// Each of the following can be used as in
+//
+//   class(std::meta::metaclasses::interface) Shape { double area(); };
+//
+// when compiling with '-fmetaclasses'. A metaclass is a consteval function
+// accepting a reflection of the class that is being defined, whose members
+// (those written in the class body) can be inspected, changed, and added to
+// just before the class is completed.
+namespace metaclasses {
+
+consteval auto __is_user_member(info m) -> bool {
+  return !is_special_member_function(m) || is_user_declared(m);
+}
+
+// An abstract base class: only public pure virtual functions, no data, no
+// copying, and a virtual destructor.
+consteval auto interface(info proto) -> void {
+  bool has_dtor = false;
+  for (info m : members_of(proto, access_context::unchecked())) {
+    if (is_nonstatic_data_member(m) || is_static_member(m) && !is_function(m))
+      compiler_error("an interface cannot contain data members");
+    if (!is_function(m) || !__is_user_member(m))
+      continue;
+
+    make_public(m);
+    if (is_destructor(m)) {
+      has_dtor = true;
+      make_virtual(m);
+    } else if (is_constructor(m) || is_assignment(m)) {
+      compiler_error("an interface cannot declare constructors or assignment "
+                     "operators");
+    } else if (!is_static_member(m)) {
+      make_virtual(m, !is_defaulted(m) && !is_user_provided(m));
+    }
+  }
+
+  string name(identifier_of(proto));
+  string code = "public: " + name + "() = default; " + name + "(const " + name +
+                "&) = delete; " + name + "& operator=(const " + name +
+                "&) = delete; ";
+  if (!has_dtor)
+    code += "virtual ~" + name + "() = default; ";
+  inject_members(proto, code);
+}
+
+// A regular type: all members public, and no virtual functions.
+consteval auto value(info proto) -> void {
+  for (info m : members_of(proto, access_context::unchecked())) {
+    if (!__is_user_member(m))
+      continue;
+    if (is_function(m) && is_virtual(m))
+      compiler_error("a value type cannot have virtual functions");
+    make_public(m);
+  }
+}
+
+// A regular type that is totally ordered by its members: adds defaulted
+// comparison operators.
+consteval auto ordered(info proto) -> void {
+  value(proto);
+  string name(identifier_of(proto));
+  inject_members(proto, "public: bool operator==(const " + name +
+                        "&) const = default; auto operator<=>(const " + name +
+                        "&) const = default; ");
+}
+
+// A plain old data type: public data, no member functions, no base classes.
+consteval auto plain_struct(info proto) -> void {
+  for (info m : members_of(proto, access_context::unchecked())) {
+    if (!__is_user_member(m))
+      continue;
+    if (is_function(m))
+      compiler_error("a plain_struct cannot have member functions");
+    make_public(m);
+  }
+}
+
+}  // namespace metaclasses
 
                           // =========================
                           // Deprecated names and APIs

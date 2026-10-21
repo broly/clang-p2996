@@ -3621,6 +3621,11 @@ defm entity_proxy_reflection : BoolFOption<"entity-proxy-reflection",
   PosFlag<SetTrue, [], [ClangOption, CC1Option],
           "Enable proposed reflection of entity proxies as described by P3XYZ">,
   NegFlag<SetFalse>>;
+defm metaclasses : BoolFOption<"metaclasses",
+  LangOpts<"Metaclasses">, DefaultFalse,
+  PosFlag<SetTrue, [], [ClangOption, CC1Option],
+          "Enable experimental metaclasses 'class(M) C { ... }' as described by P0707">,
+  NegFlag<SetFalse>>;
 defm reflection_latest : BoolFOption<"reflection-latest",
   LangOpts<"ReflectionLatest">, DefaultFalse,
   PosFlag<SetTrue, [], [ClangOption, CC1Option],

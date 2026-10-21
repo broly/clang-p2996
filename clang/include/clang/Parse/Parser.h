@@ -3423,6 +3423,17 @@ private:
                                    ParsedAttributes &Attrs, unsigned TagType,
                                    Decl *TagDecl);
 
+  /// The metaclass function named in 'class(M)', waiting for the class body
+  /// that it applies to.
+  Expr *PendingMetaclassFn = nullptr;
+
+  /// Parses any member declarations queued for injection by metafunctions
+  /// (e.g., from a metaclass or a consteval block) as if they had been written
+  /// at the current position of the class body being parsed.
+  void ParseQueuedMemberInjections(Decl *TagDecl, unsigned TagType,
+                                   AccessSpecifier &CurAS,
+                                   ParsedAttributes &AccessAttrs);
+
   /// ParseCXXMemberInitializer - Parse the brace-or-equal-initializer.
   /// Also detect and reject any attempted defaulted/deleted function
   /// definition. The location of the '=', if any, will be placed in EqualLoc.

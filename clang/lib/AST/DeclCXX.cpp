@@ -753,6 +753,46 @@ bool CXXRecordDecl::lambdaIsDefaultConstructibleAndAssignable() const {
   return getASTContext().getLangOpts().CPlusPlus20;
 }
 
+void CXXRecordDecl::updateForVirtualMember() {
+  // C++ [dcl.init.aggr]p1:
+  //   An aggregate is an array or a class with [...] no virtual functions.
+  data().Aggregate = false;
+
+  // C++ [class]p4:
+  //   A POD-struct is an aggregate class...
+  data().PlainOldData = false;
+
+  // C++14 [meta.unary.prop]p4:
+  //   T is a class type [...] with [...] no virtual member functions...
+  data().Empty = false;
+
+  // C++ [class.virtual]p1:
+  //   A class that declares or inherits a virtual function is called a
+  //   polymorphic class.
+  data().Polymorphic = true;
+
+  // C++11 [class.ctor]p5, C++11 [class.copy]p12, C++11 [class.copy]p25:
+  //   A [default constructor, copy/move constructor, or copy/move
+  //   assignment operator for a class X] is trivial [...] if:
+  //    -- class X has no virtual functions [...]
+  data().HasTrivialSpecialMembers &= SMF_Destructor;
+  data().HasTrivialSpecialMembersForCall &= SMF_Destructor;
+
+  // C++0x [class]p7:
+  //   A standard-layout class is a class that: [...]
+  //    -- has no virtual functions
+  data().IsStandardLayout = false;
+  data().IsCXX11StandardLayout = false;
+}
+
+void CXXRecordDecl::noteMethodMadeVirtual(const CXXMethodDecl *Method) {
+  updateForVirtualMember();
+  if (isa<CXXDestructorDecl>(Method)) {
+    data().HasTrivialSpecialMembers &= ~SMF_Destructor;
+    data().HasTrivialSpecialMembersForCall &= ~SMF_Destructor;
+  }
+}
+
 void CXXRecordDecl::addedMember(Decl *D) {
   if (!D->isImplicit() && !isa<FieldDecl>(D) && !isa<IndirectFieldDecl>(D) &&
       (!isa<TagDecl>(D) ||
@@ -777,37 +817,8 @@ void CXXRecordDecl::addedMember(Decl *D) {
   }
 
   if (const auto *Method = dyn_cast<CXXMethodDecl>(D)) {
-    if (Method->isVirtual()) {
-      // C++ [dcl.init.aggr]p1:
-      //   An aggregate is an array or a class with [...] no virtual functions.
-      data().Aggregate = false;
-
-      // C++ [class]p4:
-      //   A POD-struct is an aggregate class...
-      data().PlainOldData = false;
-
-      // C++14 [meta.unary.prop]p4:
-      //   T is a class type [...] with [...] no virtual member functions...
-      data().Empty = false;
-
-      // C++ [class.virtual]p1:
-      //   A class that declares or inherits a virtual function is called a
-      //   polymorphic class.
-      data().Polymorphic = true;
-
-      // C++11 [class.ctor]p5, C++11 [class.copy]p12, C++11 [class.copy]p25:
-      //   A [default constructor, copy/move constructor, or copy/move
-      //   assignment operator for a class X] is trivial [...] if:
-      //    -- class X has no virtual functions [...]
-      data().HasTrivialSpecialMembers &= SMF_Destructor;
-      data().HasTrivialSpecialMembersForCall &= SMF_Destructor;
-
-      // C++0x [class]p7:
-      //   A standard-layout class is a class that: [...]
-      //    -- has no virtual functions
-      data().IsStandardLayout = false;
-      data().IsCXX11StandardLayout = false;
-    }
+    if (Method->isVirtual())
+      updateForVirtualMember();
   }
 
   // Notify the listener if an implicit member was added after the definition

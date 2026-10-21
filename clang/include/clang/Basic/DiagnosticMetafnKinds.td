@@ -120,6 +120,19 @@ def metafn_injected_decl_non_plainly_consteval : Note<
   "cannot produce an injected declaration from a non-plainly "
   "constant-evaluated context">;
 
+// Metaclasses.
+def metafn_metaclass_requirement : Note<"metaclass requirement failed: %0">;
+def metafn_injection_target_not_open : Note<
+  "%0 is not a class that is currently being defined">;
+def metafn_member_not_in_open_class : Note<
+  "%0 is not a member of a class that is currently being defined">;
+def metafn_not_member_function : Note<"%0 is not a member function">;
+def metafn_cannot_make_virtual : Note<
+  "cannot make %0 virtual: it is a %select{constructor|static member "
+  "function|template}1">;
+def metafn_invalid_access_specifier : Note<
+  "invalid access specifier value %0">;
+
 // define_enum
 def metafn_enum_already_complete: Note<"%0 already has enumerators defined">;
 def metafn_enum_not_scoped : Note<"%0 is not a scoped enumeration type">;

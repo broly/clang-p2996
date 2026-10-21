@@ -603,6 +603,44 @@ public:
     return ED;
   }
 
+  // Returns the class that is currently being defined by the parser, if
+  // 'Ctx' is it.
+  bool isOpenClass(const DeclContext *DC) const {
+    auto *RD = dyn_cast_or_null<CXXRecordDecl>(const_cast<DeclContext *>(DC));
+    return RD && RD->isBeingDefined() && RD->Equals(S.CurContext);
+  }
+
+  bool QueueMemberInjection(CXXRecordDecl *Target, StringRef Text,
+                            SourceLocation Loc) override {
+    if (!isOpenClass(Target))
+      return false;
+    S.PendingMemberInjections.push_back({Target, Text.str(), Loc});
+    return true;
+  }
+
+  bool SetMemberAccess(Decl *Member, AccessSpecifier AS) override {
+    if (!isOpenClass(Member->getDeclContext()))
+      return false;
+    Member->setAccess(AS);
+    if (auto *FD = dyn_cast<FunctionDecl>(Member))
+      if (FunctionTemplateDecl *FTD = FD->getDescribedFunctionTemplate())
+        FTD->setAccess(AS);
+    return true;
+  }
+
+  bool MakeMemberVirtual(CXXMethodDecl *Method, bool Pure,
+                         SourceLocation Loc) override {
+    if (!isOpenClass(Method->getDeclContext()))
+      return false;
+    if (!Method->isVirtual()) {
+      Method->setVirtualAsWritten(true);
+      Method->getParent()->noteMethodMadeVirtual(Method);
+    }
+    if (Pure && !Method->isPureVirtual())
+      return !S.CheckPureMethod(Method, SourceRange());
+    return true;
+  }
+
   CXXRecordDecl *DefineAggregate(CXXRecordDecl *IncompleteDecl,
                                  ArrayRef<TagDataMemberSpec *> MemberSpecs,
                                  Decl *ContainingDecl,
@@ -2024,6 +2062,46 @@ Decl *Sema::BuildConstevalBlockDeclaration(SourceLocation ConstevalLoc,
     }
   }
   return Result;
+}
+
+bool Sema::ActOnMetaclassApplication(CXXRecordDecl *RD, Expr *MetaclassFn,
+                                     SourceLocation Loc) {
+  assert(RD->isBeingDefined() && RD->Equals(CurContext) &&
+         "metaclass must be applied while its class is being defined");
+
+  EnterExpressionEvaluationContext Ctx(
+      *this, ExpressionEvaluationContext::ImmediateFunctionContext);
+
+  // Form the invocation 'M(^^RD)'.
+  ExprResult Refl =
+      BuildCXXReflectExpr(Loc, Loc, Context.getTypeDeclType(RD));
+  if (Refl.isInvalid())
+    return false;
+
+  SmallVector<Expr *, 1> Args = {Refl.get()};
+  ExprResult Call = ActOnCallExpr(getCurScope(), MetaclassFn, Loc, Args, Loc);
+  if (Call.isInvalid())
+    return false;
+
+  // Evaluate it as an (implicit) consteval block of the class, which allows
+  // the metaclass to inject declarations into the class.
+  Decl *Block = ConstevalBlockDecl::Create(Context, CurContext, Loc,
+                                           Call.get());
+  Block->setImplicit();
+  CurContext->addDecl(Block);
+
+  SmallVector<PartialDiagnosticAt, 4> Diags;
+  Expr::EvalResult ER;
+  ER.Diag = &Diags;
+  ConstantExprKind Kind = ConstantExprKind::PlainlyConstantEvaluated;
+  if (!Call.get()->EvaluateAsConstantExpr(ER, Context, Kind, Block)) {
+    Diag(Loc, diag::err_metaclass_application_failed)
+        << Context.getTypeDeclType(RD);
+    for (PartialDiagnosticAt PD : Diags)
+      Diag(PD.first, PD.second);
+    return false;
+  }
+  return true;
 }
 
 DeclContext *Sema::TryFindDeclContextOf(SpliceSpecifier *Splice) {

@@ -99,6 +99,9 @@ def warn_toc_unsupported_type : Warning<"-mtocdata option is ignored "
 
 def err_fe_invalid_code_complete_file : Error<
     "cannot locate code-completion file %0">, DefaultFatal;
+def err_fe_metaclasses_without_reflection : Error<
+    "cannot specify '-fmetaclasses' without '-freflection'">,
+    DefaultFatal;
 def err_fe_parameter_reflection_without_reflection : Error<
     "cannot specify '-fparameter-reflection' without '-freflection'">,
     DefaultFatal;

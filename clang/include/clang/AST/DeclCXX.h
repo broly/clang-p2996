@@ -1906,6 +1906,14 @@ public:
     return K >= firstCXXRecord && K <= lastCXXRecord;
   }
   void markAbstract() { data().Abstract = true; }
+
+  /// Updates the properties of this class that depend on it having a virtual
+  /// member function, for a member function that is made virtual after having
+  /// been added to this class (e.g., by a metaclass).
+  void noteMethodMadeVirtual(const CXXMethodDecl *Method);
+
+private:
+  void updateForVirtualMember();
 };
 
 /// Store information needed for an explicit specifier.

@@ -633,6 +633,26 @@ static bool define_encoded_static_string(APValue &Result, ASTContext &C,
                                          ArrayRef<Expr *> Args,
                                          Decl *ContainingDecl);
 
+static bool inject_members(APValue &Result, ASTContext &C, MetaActions &Meta,
+                EvalFn Evaluator, DiagFn Diagnoser, bool AllowInjection,
+                QualType ResultTy, SourceRange Range, ArrayRef<Expr *> Args,
+                Decl *ContainingDecl);
+
+static bool set_member_access(APValue &Result, ASTContext &C, MetaActions &Meta,
+                EvalFn Evaluator, DiagFn Diagnoser, bool AllowInjection,
+                QualType ResultTy, SourceRange Range, ArrayRef<Expr *> Args,
+                Decl *ContainingDecl);
+
+static bool make_member_virtual(APValue &Result, ASTContext &C, MetaActions &Meta,
+                EvalFn Evaluator, DiagFn Diagnoser, bool AllowInjection,
+                QualType ResultTy, SourceRange Range, ArrayRef<Expr *> Args,
+                Decl *ContainingDecl);
+
+static bool metaclass_requirement_failed(APValue &Result, ASTContext &C, MetaActions &Meta,
+                EvalFn Evaluator, DiagFn Diagnoser, bool AllowInjection,
+                QualType ResultTy, SourceRange Range, ArrayRef<Expr *> Args,
+                Decl *ContainingDecl);
+
 static bool offset_of(APValue &Result, ASTContext &C, MetaActions &Meta,
                       EvalFn Evaluator, DiagFn Diagnoser, bool AllowInjection,
                       QualType ResultTy, SourceRange Range,
@@ -972,6 +992,12 @@ static constexpr Metafunction Metafunctions[] = {
 
   // P3867: define_encoded_static_string
   { Metafunction::MFRK_spliceFromArg, 3, 3, define_encoded_static_string },
+
+  // Metaclass support (not proposed at this time)
+  { Metafunction::MFRK_bool, 3, 3, inject_members },
+  { Metafunction::MFRK_bool, 2, 2, set_member_access },
+  { Metafunction::MFRK_bool, 2, 2, make_member_virtual },
+  { Metafunction::MFRK_bool, 2, 2, metaclass_requirement_failed },
 };
 constexpr const unsigned NumMetafunctions = sizeof(Metafunctions) /
                                             sizeof(Metafunction);
@@ -7511,6 +7537,140 @@ bool define_encoded_static_string(APValue &Result, ASTContext &C,
 
   APValue::LValuePathEntry Path[1] = {APValue::LValuePathEntry::ArrayIndex(0)};
   return SetAndSucceed(Result, APValue(StrLit, CharUnits::Zero(), Path, false));
+}
+
+// -----------------------------------------------------------------------------
+// Metaclass support
+// -----------------------------------------------------------------------------
+
+// Reads the 'Len' characters at 'Args[0]' into 'Out'.
+static bool readCharRangeArg(std::string &Out, ASTContext &C, EvalFn Evaluator,
+                             const Expr *PtrArg, const Expr *LenArg) {
+  APValue SizeV;
+  if (!Evaluator(SizeV, const_cast<Expr *>(LenArg), /*ConvertToRValue=*/true))
+    return false;
+  uint64_t Len = SizeV.getInt().getZExtValue();
+
+  APValue DataV;
+  if (!Evaluator(DataV, const_cast<Expr *>(PtrArg), /*ConvertToRValue=*/false))
+    return false;
+
+  Expr::EvalResult Status;
+  return PtrArg->EvaluateCharRangeAsString(Out, Len, DataV, C, Status);
+}
+
+bool inject_members(APValue &Result, ASTContext &C, MetaActions &Meta,
+                    EvalFn Evaluator, DiagFn Diagnoser, bool AllowInjection,
+                    QualType ResultTy, SourceRange Range, ArrayRef<Expr *> Args,
+                    Decl *ContainingDecl) {
+  assert(Args[0]->getType()->isReflectionType());
+
+  APValue RV;
+  if (!Evaluator(RV, Args[0], true))
+    return true;
+  if (!RV.isReflectedType() || !RV.getReflectedType()->isRecordType())
+    return DiagnoseReflectionKind(Diagnoser, Range, "a class type",
+                                  DescriptionOf(RV));
+
+  std::string Text;
+  if (!readCharRangeArg(Text, C, Evaluator, Args[1], Args[2]))
+    return true;
+
+  if (!AllowInjection)
+    return Diagnoser(Range.getBegin(),
+                     diag::metafn_injected_decl_non_plainly_consteval) << Range;
+
+  auto *RD = RV.getReflectedType()->getAsCXXRecordDecl();
+  if (!RD || !Meta.QueueMemberInjection(RD->getDefinition()
+                                            ? RD->getDefinition() : RD,
+                                        Text, Range.getBegin()))
+    return Diagnoser(Range.getBegin(), diag::metafn_injection_target_not_open)
+        << DescriptionOf(RV) << Range;
+
+  return SetAndSucceed(Result, makeBool(C, true));
+}
+
+bool set_member_access(APValue &Result, ASTContext &C, MetaActions &Meta,
+                       EvalFn Evaluator, DiagFn Diagnoser, bool AllowInjection,
+                       QualType ResultTy, SourceRange Range,
+                       ArrayRef<Expr *> Args, Decl *ContainingDecl) {
+  assert(Args[0]->getType()->isReflectionType());
+
+  APValue RV;
+  if (!Evaluator(RV, Args[0], true))
+    return true;
+  if (!RV.isReflectedDecl() || !isa<NamedDecl>(RV.getReflectedDecl()) ||
+      !isa<CXXRecordDecl>(RV.getReflectedDecl()->getDeclContext()))
+    return DiagnoseReflectionKind(Diagnoser, Range, "a class member",
+                                  DescriptionOf(RV));
+
+  APValue AccessV;
+  if (!Evaluator(AccessV, Args[1], true))
+    return true;
+  int64_t Access = AccessV.getInt().getSExtValue();
+  if (Access < AS_public || Access > AS_private)
+    return Diagnoser(Range.getBegin(), diag::metafn_invalid_access_specifier)
+        << (int)Access << Range;
+
+  if (!AllowInjection)
+    return Diagnoser(Range.getBegin(),
+                     diag::metafn_injected_decl_non_plainly_consteval) << Range;
+
+  if (!Meta.SetMemberAccess(const_cast<Decl *>(RV.getReflectedDecl()),
+                            static_cast<AccessSpecifier>(Access)))
+    return Diagnoser(Range.getBegin(), diag::metafn_member_not_in_open_class)
+        << DescriptionOf(RV) << Range;
+
+  return SetAndSucceed(Result, makeBool(C, true));
+}
+
+bool make_member_virtual(APValue &Result, ASTContext &C, MetaActions &Meta,
+                         EvalFn Evaluator, DiagFn Diagnoser,
+                         bool AllowInjection, QualType ResultTy,
+                         SourceRange Range, ArrayRef<Expr *> Args,
+                         Decl *ContainingDecl) {
+  assert(Args[0]->getType()->isReflectionType());
+
+  APValue RV;
+  if (!Evaluator(RV, Args[0], true))
+    return true;
+  if (!RV.isReflectedDecl() || !isa<CXXMethodDecl>(RV.getReflectedDecl()))
+    return Diagnoser(Range.getBegin(), diag::metafn_not_member_function)
+        << DescriptionOf(RV) << Range;
+  auto *Method =
+      const_cast<CXXMethodDecl *>(cast<CXXMethodDecl>(RV.getReflectedDecl()));
+  if (isa<CXXConstructorDecl>(Method) || Method->isStatic())
+    return Diagnoser(Range.getBegin(), diag::metafn_cannot_make_virtual)
+        << DescriptionOf(RV) << (isa<CXXConstructorDecl>(Method) ? 0 : 1)
+        << Range;
+
+  APValue PureV;
+  if (!Evaluator(PureV, Args[1], true))
+    return true;
+  bool Pure = PureV.getInt().getBoolValue();
+
+  if (!AllowInjection)
+    return Diagnoser(Range.getBegin(),
+                     diag::metafn_injected_decl_non_plainly_consteval) << Range;
+
+  if (!Meta.MakeMemberVirtual(Method, Pure, Range.getBegin()))
+    return Diagnoser(Range.getBegin(), diag::metafn_member_not_in_open_class)
+        << DescriptionOf(RV) << Range;
+
+  return SetAndSucceed(Result, makeBool(C, true));
+}
+
+bool metaclass_requirement_failed(APValue &Result, ASTContext &C,
+                                  MetaActions &Meta, EvalFn Evaluator,
+                                  DiagFn Diagnoser, bool AllowInjection,
+                                  QualType ResultTy, SourceRange Range,
+                                  ArrayRef<Expr *> Args,
+                                  Decl *ContainingDecl) {
+  std::string Message;
+  if (!readCharRangeArg(Message, C, Evaluator, Args[0], Args[1]))
+    return true;
+  return Diagnoser(Range.getBegin(), diag::metafn_metaclass_requirement)
+      << Message << Range;
 }
 
 }  // end namespace clang

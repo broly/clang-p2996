@@ -22,6 +22,7 @@
 #include "clang/Basic/TargetInfo.h"
 #include "clang/Basic/TokenKinds.h"
 #include "clang/Lex/LiteralSupport.h"
+#include "clang/Lex/Lexer.h"
 #include "clang/Parse/ParseHLSLRootSignature.h"
 #include "clang/Parse/Parser.h"
 #include "clang/Parse/RAIIObjectsForParser.h"
@@ -31,6 +32,7 @@
 #include "clang/Sema/Scope.h"
 #include "clang/Sema/SemaCodeCompletion.h"
 #include "clang/Sema/SemaHLSL.h"
+#include "llvm/Support/MemoryBuffer.h"
 #include "llvm/Support/SaveAndRestore.h"
 #include "llvm/Support/TimeProfiler.h"
 #include <optional>
@@ -1733,6 +1735,27 @@ void Parser::ParseClassSpecifier(tok::TokenKind TagTokKind,
   // C++11 attributes
   SourceLocation AttrFixitLoc = Tok.getLocation();
 
+  // Metaclasses (P0707): 'class(M) C { ... }'.
+  Expr *MetaclassFn = nullptr;
+  if (getLangOpts().Metaclasses && getLangOpts().CPlusPlus &&
+      Tok.is(tok::l_paren)) {
+    BalancedDelimiterTracker MCParens(*this, tok::l_paren);
+    MCParens.consumeOpen();
+    ExprResult Fn = ParseConstantExpression();
+    if (Fn.isInvalid() || MCParens.consumeClose()) {
+      SkipUntil(tok::l_brace, tok::semi, StopBeforeMatch);
+      DS.SetTypeSpecError();
+      return;
+    }
+    MetaclassFn = Fn.get();
+    if (TemplateInfo.Kind != ParsedTemplateKind::NonTemplate) {
+      Diag(MetaclassFn->getBeginLoc(), diag::err_metaclass_unsupported_context)
+          << 0;
+      MetaclassFn = nullptr;
+    }
+    MaybeParseAttributes(PAKM_CXX11 | PAKM_Declspec | PAKM_GNU, attrs);
+  }
+
   if (TagType == DeclSpec::TST_struct && Tok.isNot(tok::identifier) &&
       !Tok.isAnnotation() && Tok.getIdentifierInfo() &&
       Tok.isOneOf(
@@ -2306,10 +2329,13 @@ void Parser::ParseClassSpecifier(tok::TokenKind TagTokKind,
     if (SkipBody.ShouldSkip)
       SkipCXXMemberSpecification(StartLoc, AttrFixitLoc, TagType,
                                  TagOrTempResult.get());
-    else if (getLangOpts().CPlusPlus)
+    else if (getLangOpts().CPlusPlus) {
+      PendingMetaclassFn = MetaclassFn;
+      MetaclassFn = nullptr;
       ParseCXXMemberSpecification(StartLoc, AttrFixitLoc, attrs, TagType,
                                   TagOrTempResult.get());
-    else {
+      PendingMetaclassFn = nullptr;
+    } else {
       Decl *D =
           SkipBody.CheckSameAsPrevious ? SkipBody.New : TagOrTempResult.get();
       // Parse the definition body.
@@ -2322,6 +2348,10 @@ void Parser::ParseClassSpecifier(tok::TokenKind TagTokKind,
       }
     }
   }
+
+  if (MetaclassFn)
+    Diag(MetaclassFn->getBeginLoc(), diag::err_metaclass_unsupported_context)
+        << 1;
 
   if (!TagOrTempResult.isInvalid())
     // Delayed processing of attributes.
@@ -3682,6 +3712,57 @@ Parser::DeclGroupPtrTy Parser::ParseCXXClassMemberDeclarationWithPragmas(
   }
 }
 
+void Parser::ParseQueuedMemberInjections(Decl *TagDecl, unsigned TagType,
+                                         AccessSpecifier &CurAS,
+                                         ParsedAttributes &AccessAttrs) {
+  while (!Actions.PendingMemberInjections.empty()) {
+    SmallVector<Sema::MemberInjection, 2> Queue;
+    Queue.swap(Actions.PendingMemberInjections);
+
+    for (Sema::MemberInjection &Inj : Queue) {
+      // Make the text a (virtual) source file, so that diagnostics about the
+      // injected declarations can point into it.
+      SourceManager &SM = PP.getSourceManager();
+      FileID FID = SM.createFileID(
+          llvm::MemoryBuffer::getMemBufferCopy(Inj.Text, "<injected-members>"),
+          SrcMgr::C_User, /*LoadedID=*/0, /*LoadedOffset=*/0, Inj.Loc);
+      llvm::MemoryBufferRef Buf = SM.getBufferOrFake(FID);
+
+      SmallVector<Token, 32> Toks;
+      Lexer L(SM.getLocForStartOfFile(FID), PP.getLangOpts(),
+              Buf.getBufferStart(), Buf.getBufferStart(), Buf.getBufferEnd());
+      Token Lexed;
+      while (true) {
+        L.LexFromRawLexer(Lexed);
+        if (Lexed.is(tok::eof))
+          break;
+        if (Lexed.is(tok::raw_identifier))
+          PP.LookUpIdentifierInfo(Lexed);
+        Toks.push_back(Lexed);
+      }
+
+      Token End;
+      End.startToken();
+      End.setKind(tok::eof);
+      End.setLocation(SM.getLocForEndOfFile(FID));
+      Toks.push_back(End);
+      // Append the current token so that it is not lost.
+      Toks.push_back(Tok);
+      PP.EnterTokenStream(Toks, /*DisableMacroExpansion=*/true,
+                          /*IsReinject=*/true);
+      ConsumeAnyToken(/*ConsumeCodeCompletionTok=*/true);
+
+      while (Tok.isNot(tok::eof)) {
+        ParseCXXClassMemberDeclarationWithPragmas(
+            CurAS, AccessAttrs, static_cast<DeclSpec::TST>(TagType), TagDecl);
+        MaybeDestroyTemplateIds();
+      }
+      // Consume the end marker; this makes the saved token current again.
+      ConsumeAnyToken();
+    }
+  }
+}
+
 void Parser::ParseCXXMemberSpecification(SourceLocation RecordLoc,
                                          SourceLocation AttrFixitLoc,
                                          ParsedAttributes &Attrs,
@@ -3699,6 +3780,11 @@ void Parser::ParseCXXMemberSpecification(SourceLocation RecordLoc,
 
   PrettyDeclStackTraceEntry CrashInfo(Actions.Context, TagDecl, RecordLoc,
                                       "parsing struct/union/class body");
+
+  // Take ownership of the metaclass of this class (if any) so that it is not
+  // mistaken for the metaclass of a nested class.
+  Expr *MetaclassFn = PendingMetaclassFn;
+  PendingMetaclassFn = nullptr;
 
   // Determine whether this is a non-nested class. Note that local
   // classes are *not* considered to be nested classes.
@@ -3905,6 +3991,18 @@ void Parser::ParseCXXMemberSpecification(SourceLocation RecordLoc,
       ParseCXXClassMemberDeclarationWithPragmas(
           CurAS, AccessAttrs, static_cast<DeclSpec::TST>(TagType), TagDecl);
       MaybeDestroyTemplateIds();
+      if (getLangOpts().Metaclasses)
+        ParseQueuedMemberInjections(TagDecl, TagType, CurAS, AccessAttrs);
+    }
+
+    // Apply the metaclass, now that all of the members written in the
+    // class body are known (and before the class is completed).
+    if (MetaclassFn && Tok.is(tok::r_brace)) {
+      if (Actions.ActOnMetaclassApplication(cast<CXXRecordDecl>(TagDecl),
+                                            MetaclassFn, RecordLoc))
+        ParseQueuedMemberInjections(TagDecl, TagType, CurAS, AccessAttrs);
+      else
+        Actions.PendingMemberInjections.clear();
     }
     T.consumeClose();
   } else {
