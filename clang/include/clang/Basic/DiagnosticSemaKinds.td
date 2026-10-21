@@ -3257,6 +3257,9 @@ def err_unknown_metafunction : Error<
 def err_metafunction_arity : Error<
   "expected between %0 and %1 arguments (%2 given)">;
 
+def err_metaclass_application_failed : Error<
+  "application of metaclass to %0 failed">;
+
 def err_consteval_block_not_constexpr : Error<
   "evaluating expression of a consteval block must be a constant expression">;
 

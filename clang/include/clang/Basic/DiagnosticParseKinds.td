@@ -435,8 +435,6 @@ def err_expected_class_name : Error<"expected class name">;
 def err_metaclass_unsupported_context : Error<
   "metaclass application is not supported %select{on a template|on a "
   "declaration that is not a definition}0">;
-def err_metaclass_application_failed : Error<
-  "application of metaclass to %0 failed">;
 def err_expected_class_name_not_template :
   Error<"'typename' is redundant; base classes are implicitly types">;
 def err_unspecified_vla_size_with_static : Error<
