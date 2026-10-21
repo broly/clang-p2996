@@ -177,6 +177,16 @@ consteval auto make_virtual(info member_function, bool pure) -> void;
 consteval auto compiler_error(string_view message) -> void;
 consteval auto compiler_require(bool condition, string_view message) -> void;
 
+// code injection with token sequences (P3294-style, see -fmetaclasses)
+//
+//   ^^{ tokens... }  evaluates to an 'info' representing the tokens, where
+//                    \(e) is replaced by the value of 'e', \id(a, b, ...) by
+//                    an identifier formed from the (string, integer, or
+//                    reflection) arguments, and \tokens(t) by the tokens of
+//                    the token sequence 't'.
+consteval auto injection_target() -> info;
+consteval auto queue_injection(info token_sequence) -> void;
+
 // data layout
 struct member_offset {
   ptrdiff_t bytes;
@@ -618,6 +628,8 @@ enum : unsigned {
   __metafn_set_member_access,
   __metafn_make_member_virtual,
   __metafn_metaclass_requirement_failed,
+  __metafn_injection_target,
+  __metafn_spelling_of,
 };
 
 consteval auto __workaround_expand_compiler_builtins(info type) -> info;
@@ -2776,6 +2788,123 @@ consteval auto reflect_constant_string(std::u8string_view In) -> info {
     Args.push_back(reflect_constant(C));
   Args.push_back(reflect_constant(char8_t{}));
   return substitute(^^__define_static::FixedArray, Args);
+}
+
+                          // =======================================
+                          // Token sequences and code injection (P3294)
+                          // =======================================
+
+// The functions named '__ts_*' are the targets of the rewriting of a token
+// sequence '^^{ ... }' by the compiler. A token sequence is represented by a
+// reflection of a static string holding the source text of its tokens.
+
+consteval auto __ts_text_of(info seq) -> string_view {
+  return string_view(extract<const char *>(seq), meta::extent(type_of(seq)) - 1);
+}
+
+consteval auto __ts_spelling_of(info r) -> string_view {
+  return __metafunction(detail::__metafn_spelling_of, ^^const char *, r);
+}
+
+consteval auto __ts_quote(string_view s) -> string {
+  string r = "\"";
+  for (char c : s) {
+    if (c == '"' || c == '\\')
+      r += '\\';
+    if (c == '\n') {
+      r += "\\n";
+      continue;
+    }
+    r += c;
+  }
+  r += '"';
+  return r;
+}
+
+template <class T>
+consteval auto __ts_digits(T v) -> string {
+  using U = make_unsigned_t<T>;
+  bool neg = false;
+  U u = static_cast<U>(v);
+  if constexpr (is_signed_v<T>) {
+    if (v < 0) {
+      neg = true;
+      u = static_cast<U>(U(0) - u);
+    }
+  }
+  string r;
+  do {
+    r.insert(r.begin(), static_cast<char>('0' + u % 10));
+    u /= 10;
+  } while (u != 0);
+  if (neg)
+    r.insert(r.begin(), '-');
+  return r;
+}
+
+// '\(e)': the source text of the value 'v'.
+template <class T>
+consteval auto __ts_val(const T &v) -> string {
+  if constexpr (is_same_v<T, info>)
+    return string(__ts_spelling_of(v));
+  else if constexpr (is_same_v<T, bool>)
+    return v ? "true" : "false";
+  else if constexpr (is_integral_v<T>)
+    return __ts_digits(v);
+  else if constexpr (is_enum_v<T>)
+    return __ts_digits(static_cast<underlying_type_t<T>>(v));
+  else if constexpr (is_convertible_v<const T &, string_view>)
+    return __ts_quote(string_view(v));
+  else
+    static_assert(sizeof(T) == 0, "cannot interpolate a value of this type");
+}
+
+template <class T>
+consteval auto __ts_raw(const T &v) -> string {
+  if constexpr (is_same_v<T, info>)
+    return string(identifier_of(v));
+  else if constexpr (is_integral_v<T>)
+    return __ts_digits(v);
+  else
+    return string(string_view(v));
+}
+
+// '\id(a, b, ...)': an identifier made by concatenating the arguments.
+template <class... Ts>
+consteval auto __ts_id(const Ts &...parts) -> string {
+  string r;
+  ((r += __ts_raw(parts)), ...);
+  return r;
+}
+
+// '\tokens(t)': the tokens of the token sequence 't'.
+consteval auto __ts_tok(info seq) -> string {
+  return string(__ts_text_of(seq));
+}
+
+consteval auto __ts_lit(string_view s) -> string {
+  return string(s);
+}
+
+template <class... Ts>
+consteval auto __ts_make(const Ts &...parts) -> info {
+  string all;
+  ((all += parts, all += ' '), ...);
+  return reflect_constant_string(all);
+}
+
+consteval auto injection_target() -> info {
+  return __metafunction(detail::__metafn_injection_target);
+}
+
+// Adds the declarations in 'token_sequence' to the class that is currently
+// being defined (e.g., by a metaclass, or a consteval block in a class).
+consteval auto queue_injection(info token_sequence) -> void {
+  info target = injection_target();
+  compiler_require(target != info{},
+                   "queue_injection must be called while a class is being "
+                   "defined");
+  inject_members(target, __ts_text_of(token_sequence));
 }
 
 _LIBCPP_END_NAMESPACE_REFLECTION_V2

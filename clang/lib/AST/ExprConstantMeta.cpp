@@ -633,6 +633,18 @@ static bool define_encoded_static_string(APValue &Result, ASTContext &C,
                                          ArrayRef<Expr *> Args,
                                          Decl *ContainingDecl);
 
+static bool injection_target(APValue &Result, ASTContext &C, MetaActions &Meta,
+                             EvalFn Evaluator, DiagFn Diagnoser,
+                             bool AllowInjection, QualType ResultTy,
+                             SourceRange Range, ArrayRef<Expr *> Args,
+                             Decl *ContainingDecl);
+
+static bool spelling_of(APValue &Result, ASTContext &C, MetaActions &Meta,
+                        EvalFn Evaluator, DiagFn Diagnoser,
+                        bool AllowInjection, QualType ResultTy,
+                        SourceRange Range, ArrayRef<Expr *> Args,
+                        Decl *ContainingDecl);
+
 static bool inject_members(APValue &Result, ASTContext &C, MetaActions &Meta,
                 EvalFn Evaluator, DiagFn Diagnoser, bool AllowInjection,
                 QualType ResultTy, SourceRange Range, ArrayRef<Expr *> Args,
@@ -998,6 +1010,8 @@ static constexpr Metafunction Metafunctions[] = {
   { Metafunction::MFRK_bool, 2, 2, set_member_access },
   { Metafunction::MFRK_bool, 2, 2, make_member_virtual },
   { Metafunction::MFRK_bool, 2, 2, metaclass_requirement_failed },
+  { Metafunction::MFRK_metaInfo, 0, 0, injection_target },
+  { Metafunction::MFRK_spliceFromArg, 2, 2, spelling_of },
 };
 constexpr const unsigned NumMetafunctions = sizeof(Metafunctions) /
                                             sizeof(Metafunction);
@@ -7566,6 +7580,70 @@ static bool readCharRangeArg(std::string &Out, ASTContext &C, EvalFn Evaluator,
 
   Expr::EvalResult Status;
   return PtrArg->EvaluateCharRangeAsString(Out, Len, DataV, C, Status);
+}
+
+// Returns a reflection of the class that is currently being defined (the one
+// that declarations are injected into), or the null reflection.
+bool injection_target(APValue &Result, ASTContext &C, MetaActions &Meta,
+                      EvalFn Evaluator, DiagFn Diagnoser, bool AllowInjection,
+                      QualType ResultTy, SourceRange Range,
+                      ArrayRef<Expr *> Args, Decl *ContainingDecl) {
+  if (auto *RD = dyn_cast_or_null<CXXRecordDecl>(Meta.CurrentCtx());
+      RD && RD->isBeingDefined())
+    return SetAndSucceed(Result, makeReflection(C.getTypeDeclType(RD)));
+  return SetAndSucceed(Result, makeReflection(nullptr));
+}
+
+// Returns source text that names the reflected type or entity.
+bool spelling_of(APValue &Result, ASTContext &C, MetaActions &Meta,
+                 EvalFn Evaluator, DiagFn Diagnoser, bool AllowInjection,
+                 QualType ResultTy, SourceRange Range, ArrayRef<Expr *> Args,
+                 Decl *ContainingDecl) {
+  APValue RV;
+  if (!Evaluator(RV, Args[1], true))
+    return true;
+  RV = MaybeUnproxy(C, RV, /*Dealias=*/false);
+
+  PrintingPolicy Policy = C.getPrintingPolicy();
+  Policy.FullyQualifiedName = true;
+  Policy.SuppressScope = false;
+
+  std::string Name;
+  llvm::raw_string_ostream OS(Name);
+  switch (RV.getReflectionKind()) {
+  case ReflectionKind::Type:
+    RV.getReflectedType().print(OS, Policy);
+    break;
+  case ReflectionKind::Declaration:
+    if (auto *ND = dyn_cast<NamedDecl>(RV.getReflectedDecl())) {
+      OS << "::";
+      ND->printQualifiedName(OS, Policy);
+    }
+    break;
+  case ReflectionKind::Namespace:
+    if (auto *ND = dyn_cast<NamedDecl>(RV.getReflectedNamespace())) {
+      OS << "::";
+      ND->printQualifiedName(OS, Policy);
+    }
+    break;
+  case ReflectionKind::Template:
+    if (const TemplateDecl *TD = RV.getReflectedTemplate().getAsTemplateDecl()) {
+      OS << "::";
+      TD->printQualifiedName(OS, Policy);
+    }
+    break;
+  default:
+    break;
+  }
+  OS.flush();
+  if (Name.empty() || Name == "::")
+    return Diagnoser(Range.getBegin(), diag::metafn_cannot_spell)
+        << DescriptionOf(RV) << Range;
+
+  Expr *StrLit = makeStrLiteral(Name, C, /*Utf8=*/false);
+  APValue::LValuePathEntry Path[1] = {APValue::LValuePathEntry::ArrayIndex(0)};
+  return SetAndSucceed(Result,
+                       APValue(StrLit, CharUnits::Zero(), Path, false));
 }
 
 bool inject_members(APValue &Result, ASTContext &C, MetaActions &Meta,

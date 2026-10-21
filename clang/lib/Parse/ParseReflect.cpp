@@ -15,6 +15,7 @@
 #include "clang/AST/ASTContext.h"
 #include "clang/AST/LocInfoType.h"
 #include "clang/Basic/DiagnosticParse.h"
+#include "clang/Lex/Preprocessor.h"
 #include "clang/Parse/Parser.h"
 #include "clang/Parse/RAIIObjectsForParser.h"
 #include "clang/Sema/EnterExpressionEvaluationContext.h"
@@ -288,4 +289,197 @@ DeclResult Parser::ParseCXXSpliceAsNamespace() {
   ConsumeAnnotationToken();
 
   return Actions.ActOnCXXSpliceExpectingNamespace(Splice);
+}
+
+                        // ===============================
+                        // Token sequences (P3294)
+                        // ===============================
+
+namespace {
+enum class TokenSeqPieceKind { Text, Value, Identifier, Tokens };
+
+struct TokenSeqPiece {
+  TokenSeqPieceKind Kind;
+  std::string Text;                // for 'Text'
+  SmallVector<Token, 8> Operand;   // for the interpolations
+};
+} // namespace
+
+ExprResult Parser::ParseTokenSequenceExpression(SourceLocation OpLoc) {
+  assert(Tok.is(tok::l_brace) && "not a token sequence");
+  ConsumeAnyToken();  // '{'
+
+  SourceManager &SM = PP.getSourceManager();
+  auto IsBackslash = [&](const Token &T) {
+    return T.is(tok::unknown) && T.getLength() == 1 &&
+           *SM.getCharacterData(T.getLocation()) == '\\';
+  };
+
+  SmallVector<TokenSeqPiece, 8> Pieces;
+  std::string CurText;
+  auto FlushText = [&] {
+    if (CurText.empty())
+      return;
+    Pieces.push_back({TokenSeqPieceKind::Text, std::move(CurText), {}});
+    CurText.clear();
+  };
+
+  unsigned Depth = 0;
+  while (true) {
+    if (Tok.is(tok::eof)) {
+      Diag(Tok, diag::err_expected) << tok::r_brace;
+      return ExprError();
+    }
+    if (Tok.is(tok::r_brace) && Depth == 0)
+      break;
+
+    if (IsBackslash(Tok)) {
+      ConsumeAnyToken();  // '\'
+
+      TokenSeqPieceKind Kind = TokenSeqPieceKind::Value;
+      if (Tok.is(tok::identifier) && Tok.getIdentifierInfo()->isStr("id")) {
+        Kind = TokenSeqPieceKind::Identifier;
+        ConsumeAnyToken();
+      } else if (Tok.is(tok::identifier) &&
+                 Tok.getIdentifierInfo()->isStr("tokens")) {
+        Kind = TokenSeqPieceKind::Tokens;
+        ConsumeAnyToken();
+      }
+      if (Tok.isNot(tok::l_paren)) {
+        Diag(Tok, diag::err_expected) << tok::l_paren;
+        return ExprError();
+      }
+      ConsumeAnyToken();  // '('
+
+      TokenSeqPiece Piece{Kind, {}, {}};
+      unsigned OperandDepth = 0;
+      while (!(Tok.is(tok::r_paren) && OperandDepth == 0)) {
+        if (Tok.is(tok::eof)) {
+          Diag(Tok, diag::err_expected) << tok::r_paren;
+          return ExprError();
+        }
+        if (Tok.isOneOf(tok::l_paren, tok::l_square, tok::l_brace))
+          ++OperandDepth;
+        else if (Tok.isOneOf(tok::r_paren, tok::r_square, tok::r_brace))
+          --OperandDepth;
+        Piece.Operand.push_back(Tok);
+        ConsumeAnyToken();
+      }
+      ConsumeAnyToken();  // ')'
+
+      FlushText();
+      Pieces.push_back(std::move(Piece));
+      continue;
+    }
+
+    if (Tok.isOneOf(tok::l_paren, tok::l_square, tok::l_brace))
+      ++Depth;
+    else if (Tok.isOneOf(tok::r_paren, tok::r_square, tok::r_brace))
+      --Depth;
+
+    SmallString<32> Buffer;
+    CurText += PP.getSpelling(Tok, Buffer);
+    CurText += ' ';
+    ConsumeAnyToken();
+  }
+  FlushText();
+  ConsumeAnyToken();  // '}'
+
+  // Rewrite the sequence as:
+  //   ::std::meta::__ts_make(::std::meta::__ts_lit("..."),
+  //                          ::std::meta::__ts_val(e), ...)
+  SmallVector<Token, 64> Out;
+  auto Punct = [&](tok::TokenKind K, unsigned Len = 1) {
+    Token T;
+    T.startToken();
+    T.setKind(K);
+    T.setLocation(OpLoc);
+    T.setLength(Len);
+    Out.push_back(T);
+  };
+  auto Ident = [&](StringRef Name) {
+    Token T;
+    T.startToken();
+    T.setKind(tok::identifier);
+    T.setLocation(OpLoc);
+    T.setLength(Name.size());
+    T.setIdentifierInfo(PP.getIdentifierInfo(Name));
+    Out.push_back(T);
+  };
+  auto Qualified = [&](StringRef Name) {
+    Punct(tok::coloncolon, 2);
+    Ident("std");
+    Punct(tok::coloncolon, 2);
+    Ident("meta");
+    Punct(tok::coloncolon, 2);
+    Ident(Name);
+  };
+  auto StringLit = [&](StringRef Contents) {
+    std::string Quoted = "\"";
+    for (char C : Contents) {
+      if (C == '"' || C == '\\')
+        Quoted += '\\';
+      Quoted += C;
+    }
+    Quoted += '"';
+    Token T;
+    T.startToken();
+    T.setKind(tok::string_literal);
+    PP.CreateString(Quoted, T, OpLoc, OpLoc);
+    Out.push_back(T);
+  };
+
+  Qualified("__ts_make");
+  Punct(tok::l_paren);
+  bool First = true;
+  for (TokenSeqPiece &P : Pieces) {
+    if (!First)
+      Punct(tok::comma);
+    First = false;
+
+    switch (P.Kind) {
+    case TokenSeqPieceKind::Text:
+      Qualified("__ts_lit");
+      break;
+    case TokenSeqPieceKind::Value:
+      Qualified("__ts_val");
+      break;
+    case TokenSeqPieceKind::Identifier:
+      Qualified("__ts_id");
+      break;
+    case TokenSeqPieceKind::Tokens:
+      Qualified("__ts_tok");
+      break;
+    }
+    Punct(tok::l_paren);
+    if (P.Kind == TokenSeqPieceKind::Text)
+      StringLit(P.Text);
+    else
+      Out.append(P.Operand.begin(), P.Operand.end());
+    Punct(tok::r_paren);
+  }
+  Punct(tok::r_paren);
+
+  Token End;
+  End.startToken();
+  End.setKind(tok::eof);
+  End.setLocation(OpLoc);
+  Out.push_back(End);
+  // Append the current token so that it is not lost.
+  Out.push_back(Tok);
+  PP.EnterTokenStream(Out, /*DisableMacroExpansion=*/true,
+                      /*IsReinject=*/true);
+  ConsumeAnyToken();
+
+  ExprResult Result = ParseAssignmentExpression();
+  if (Tok.is(tok::eof)) {
+    ConsumeAnyToken();  // restores the saved token
+  } else {
+    Diag(Tok, diag::err_expected) << tok::r_paren;
+    while (Tok.isNot(tok::eof))
+      ConsumeAnyToken();
+    ConsumeAnyToken();
+    return ExprError();
+  }
+  return Result;
 }

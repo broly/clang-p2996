@@ -126,6 +126,8 @@ def metafn_injection_target_not_open : Note<
   "%0 is not a class that is currently being defined">;
 def metafn_member_not_in_open_class : Note<
   "%0 is not a member of a class that is currently being defined">;
+def metafn_cannot_spell : Note<
+  "cannot produce source text naming %0">;
 def metafn_not_member_function : Note<"%0 is not a member function">;
 def metafn_cannot_make_virtual : Note<
   "cannot make %0 virtual: it is a %select{constructor|static member "

@@ -8376,6 +8376,11 @@ private:
   //===--------------------------------------------------------------------===//
   // C++2c: Reflection [P2996]
   ExprResult ParseCXXReflectExpression(SourceLocation OpLoc);
+
+  /// Parses a token sequence '^^{ ... }' (as in P3294), whose '^^' has already
+  /// been consumed, by rewriting it to a call of 'std::meta::__ts_make' having
+  /// a string-valued argument for each piece of the sequence.
+  ExprResult ParseTokenSequenceExpression(SourceLocation OpLoc);
   ExprResult ParseCXXMetafunctionExpression();
 
   bool ParseSpliceSpecifier(bool TryParseSpecialization = false);
