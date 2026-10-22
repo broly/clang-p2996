@@ -758,6 +758,18 @@ bool Parser::ParseTopLevelDecl(DeclGroupPtrTy &Result,
     ;
 
   Result = ParseExternalDeclaration(DeclAttrs, DeclSpecAttrs);
+  if (!Actions.PendingTrailingInjections.empty() &&
+      Actions.CurContext->isFileContext()) {
+    SmallVector<Decl *, 4> Decls;
+    if (Result)
+      for (Decl *D : Result.get())
+        Decls.push_back(D);
+    size_t Before = Decls.size();
+    ParseQueuedTrailingInjections(&Decls);
+    if (Decls.size() != Before)
+      Result = DeclGroupPtrTy::make(
+          DeclGroupRef::Create(Actions.Context, Decls.data(), Decls.size()));
+  }
   // An empty Result might mean a line with ';' or some parsing error, ignore
   // it.
   if (Result) {
@@ -779,6 +791,22 @@ Parser::DeclGroupPtrTy
 Parser::ParseExternalDeclaration(ParsedAttributes &Attrs,
                                  ParsedAttributes &DeclSpecAttrs,
                                  ParsingDeclSpec *DS) {
+  DeclGroupPtrTy Result = ParseExternalDeclarationImpl(Attrs, DeclSpecAttrs, DS);
+  // Declarations queued by 'queue_injection_after_class' are parsed after the
+  // declaration that defined the class. At translation unit scope they go
+  // into the declaration group returned to the consumer (ParseTopLevelDecl);
+  // inside an export-declaration or a linkage specification they wait for the
+  // enclosing declaration to end.
+  if (!Actions.PendingTrailingInjections.empty() &&
+      Actions.CurContext->isNamespace())
+    ParseQueuedTrailingInjections(/*Collected=*/nullptr);
+  return Result;
+}
+
+Parser::DeclGroupPtrTy
+Parser::ParseExternalDeclarationImpl(ParsedAttributes &Attrs,
+                                     ParsedAttributes &DeclSpecAttrs,
+                                     ParsingDeclSpec *DS) {
   DestroyTemplateIdAnnotationsRAIIObj CleanupRAII(*this);
   ParenBraceBracketBalancer BalancerRAIIObj(*this);
 

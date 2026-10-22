@@ -3720,40 +3720,7 @@ void Parser::ParseQueuedMemberInjections(Decl *TagDecl, unsigned TagType,
     Queue.swap(Actions.PendingMemberInjections);
 
     for (Sema::MemberInjection &Inj : Queue) {
-      // Make the text a (virtual) source file, so that diagnostics about the
-      // injected declarations can point into it.
-      SourceManager &SM = PP.getSourceManager();
-      FileID FID = SM.createFileID(
-          llvm::MemoryBuffer::getMemBufferCopy(Inj.Text, "<injected-members>"),
-          SrcMgr::C_User, /*LoadedID=*/0, /*LoadedOffset=*/0,
-          // The include location must be a local location (the injecting call
-          // may be in an imported module), so use that of the class.
-          Inj.Target->getLocation());
-      llvm::MemoryBufferRef Buf = SM.getBufferOrFake(FID);
-
-      SmallVector<Token, 32> Toks;
-      Lexer L(SM.getLocForStartOfFile(FID), PP.getLangOpts(),
-              Buf.getBufferStart(), Buf.getBufferStart(), Buf.getBufferEnd());
-      Token Lexed;
-      while (true) {
-        L.LexFromRawLexer(Lexed);
-        if (Lexed.is(tok::eof))
-          break;
-        if (Lexed.is(tok::raw_identifier))
-          PP.LookUpIdentifierInfo(Lexed);
-        Toks.push_back(Lexed);
-      }
-
-      Token End;
-      End.startToken();
-      End.setKind(tok::eof);
-      End.setLocation(SM.getLocForEndOfFile(FID));
-      Toks.push_back(End);
-      // Append the current token so that it is not lost.
-      Toks.push_back(Tok);
-      PP.EnterTokenStream(Toks, /*DisableMacroExpansion=*/true,
-                          /*IsReinject=*/true);
-      ConsumeAnyToken(/*ConsumeCodeCompletionTok=*/true);
+      EnterInjectedTokens(Inj);
 
       while (Tok.isNot(tok::eof)) {
         ParseCXXClassMemberDeclarationWithPragmas(
@@ -3763,6 +3730,86 @@ void Parser::ParseQueuedMemberInjections(Decl *TagDecl, unsigned TagType,
       // Consume the end marker; this makes the saved token current again.
       ConsumeAnyToken();
     }
+  }
+}
+
+void Parser::EnterInjectedTokens(const Sema::MemberInjection &Inj) {
+  // Make the text a (virtual) source file, so that diagnostics about the
+  // injected declarations can point into it.
+  SourceManager &SM = PP.getSourceManager();
+  FileID FID = SM.createFileID(
+      llvm::MemoryBuffer::getMemBufferCopy(Inj.Text, "<injected-members>"),
+      SrcMgr::C_User, /*LoadedID=*/0, /*LoadedOffset=*/0,
+      // The include location must be a local location (the injecting call
+      // may be in an imported module), so use that of the class.
+      Inj.Target->getLocation());
+  llvm::MemoryBufferRef Buf = SM.getBufferOrFake(FID);
+
+  SmallVector<Token, 32> Toks;
+  Lexer L(SM.getLocForStartOfFile(FID), PP.getLangOpts(),
+          Buf.getBufferStart(), Buf.getBufferStart(), Buf.getBufferEnd());
+  Token Lexed;
+  while (true) {
+    L.LexFromRawLexer(Lexed);
+    if (Lexed.is(tok::eof))
+      break;
+    if (Lexed.is(tok::raw_identifier))
+      PP.LookUpIdentifierInfo(Lexed);
+    Toks.push_back(Lexed);
+  }
+
+  Token End;
+  End.startToken();
+  End.setKind(tok::eof);
+  End.setLocation(SM.getLocForEndOfFile(FID));
+  Toks.push_back(End);
+  // Append the current token so that it is not lost.
+  Toks.push_back(Tok);
+  // The token stream must own the tokens: they are parsed after this function returns.
+  auto Owned = std::make_unique<Token[]>(Toks.size());
+  std::copy(Toks.begin(), Toks.end(), Owned.get());
+  PP.EnterTokenStream(std::move(Owned), Toks.size(),
+                      /*DisableMacroExpansion=*/true, /*IsReinject=*/true);
+  ConsumeAnyToken(/*ConsumeCodeCompletionTok=*/true);
+}
+
+void Parser::ParseQueuedTrailingInjections(SmallVectorImpl<Decl *> *Collected) {
+  // The declarations are parsed in the scope that holds the class. While the
+  // class is inside an export-declaration or a linkage specification, or while
+  // another scope is current (a namespace opened later in the same
+  // declaration), they wait.
+  DeclContext *Here = Actions.CurContext;
+  if (Here->isTransparentContext())
+    return;
+  Here = Here->getRedeclContext();
+
+  while (true) {
+    auto &Pending = Actions.PendingTrailingInjections;
+    auto It = llvm::find_if(Pending, [&](const Sema::MemberInjection &Inj) {
+      return Inj.Target->getLexicalDeclContext()->getRedeclContext()->Equals(
+          Here);
+    });
+    if (It == Pending.end())
+      return;
+    Sema::MemberInjection Inj = std::move(*It);
+    Pending.erase(It);
+
+    EnterInjectedTokens(Inj);
+
+    while (Tok.isNot(tok::eof)) {
+      ParsedAttributes DeclAttrs(AttrFactory);
+      ParsedAttributes DeclSpecAttrs(AttrFactory);
+      while (MaybeParseCXX11Attributes(DeclAttrs) ||
+             MaybeParseGNUAttributes(DeclSpecAttrs))
+        ;
+      DeclGroupPtrTy Group = ParseExternalDeclaration(DeclAttrs, DeclSpecAttrs);
+      if (Group && Collected)
+        for (Decl *D : Group.get())
+          Collected->push_back(D);
+      MaybeDestroyTemplateIds();
+    }
+    // Consume the end marker; this makes the saved token current again.
+    ConsumeAnyToken();
   }
 }
 
@@ -4004,8 +4051,10 @@ void Parser::ParseCXXMemberSpecification(SourceLocation RecordLoc,
       if (Actions.ActOnMetaclassApplication(cast<CXXRecordDecl>(TagDecl),
                                             MetaclassFn, RecordLoc))
         ParseQueuedMemberInjections(TagDecl, TagType, CurAS, AccessAttrs);
-      else
+      else {
         Actions.PendingMemberInjections.clear();
+        Actions.PendingTrailingInjections.clear();
+      }
     }
     T.consumeClose();
   } else {

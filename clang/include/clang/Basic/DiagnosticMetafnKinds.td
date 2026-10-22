@@ -124,6 +124,8 @@ def metafn_injected_decl_non_plainly_consteval : Note<
 def metafn_metaclass_requirement : Note<"metaclass requirement failed: %0">;
 def metafn_injection_target_not_open : Note<
   "%0 is not a class that is currently being defined">;
+def metafn_trailing_injection_target_invalid : Note<
+  "%0 is not a namespace-scope class that is currently being defined">;
 def metafn_member_not_in_open_class : Note<
   "%0 is not a member of a class that is currently being defined">;
 def metafn_cannot_spell : Note<

@@ -618,6 +618,15 @@ public:
     return true;
   }
 
+  bool QueueTrailingInjection(CXXRecordDecl *Target, StringRef Text,
+                              SourceLocation Loc) override {
+    if (!isOpenClass(Target) ||
+        !Target->getDeclContext()->getRedeclContext()->isFileContext())
+      return false;
+    S.PendingTrailingInjections.push_back({Target, Text.str(), Loc});
+    return true;
+  }
+
   bool SetMemberAccess(Decl *Member, AccessSpecifier AS) override {
     if (!isOpenClass(Member->getDeclContext()))
       return false;

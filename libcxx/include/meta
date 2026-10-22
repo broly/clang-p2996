@@ -187,6 +187,7 @@ consteval auto compiler_require(bool condition, string_view message) -> void;
 //                    the token sequence 't'.
 consteval auto injection_target() -> info;
 consteval auto queue_injection(info token_sequence) -> void;
+consteval auto queue_injection_after_class(info token_sequence) -> void;
 
 // data layout
 struct member_offset {
@@ -631,6 +632,7 @@ enum : unsigned {
   __metafn_metaclass_requirement_failed,
   __metafn_injection_target,
   __metafn_spelling_of,
+  __metafn_inject_after_class,
 };
 
 consteval auto __workaround_expand_compiler_builtins(info type) -> info;
@@ -2912,6 +2914,20 @@ consteval auto queue_injection(info token_sequence) -> void {
                    "queue_injection must be called while a class is being "
                    "defined");
   inject_members(target, __ts_text_of(token_sequence));
+}
+
+// Adds the declarations in 'token_sequence' at namespace scope, right after the
+// definition of the class that is currently being defined (which must be a
+// namespace-scope class). Use it for out-of-class definitions of static data
+// members: `queue_injection_after_class(^^{ T C::x; })`.
+consteval auto queue_injection_after_class(info token_sequence) -> void {
+  info target = injection_target();
+  compiler_require(target != info{},
+                   "queue_injection_after_class must be called while a class "
+                   "is being defined");
+  string_view code = __ts_text_of(token_sequence);
+  __metafunction(detail::__metafn_inject_after_class, target, code.data(),
+                 code.size());
 }
 
 _LIBCPP_END_NAMESPACE_REFLECTION_V2

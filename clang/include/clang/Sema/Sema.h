@@ -15655,6 +15655,11 @@ public:
   };
   SmallVector<MemberInjection, 2> PendingMemberInjections;
 
+  /// Source text of declarations that a metafunction queued for parsing at
+  /// namespace scope, right after the definition of 'Target' (see
+  /// 'queue_injection_after_class').
+  SmallVector<MemberInjection, 2> PendingTrailingInjections;
+
   /// Applies the metaclass function \p MetaclassFn (as in 'class(M) C { }') to
   /// the class \p RD, which is just about to be completed. Returns 'true' on
   /// success.

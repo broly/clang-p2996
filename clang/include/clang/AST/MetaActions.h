@@ -152,6 +152,12 @@ public:
   virtual bool QueueMemberInjection(CXXRecordDecl *Target, StringRef Text,
                                     SourceLocation Loc) = 0;
 
+  // Queues the declarations in 'Text' for parsing at namespace scope right
+  // after the definition of 'Target', which must be the namespace-scope class
+  // currently being defined. Returns 'false' if 'Target' is not such a class.
+  virtual bool QueueTrailingInjection(CXXRecordDecl *Target, StringRef Text,
+                                      SourceLocation Loc) = 0;
+
   // Changes the access of 'Member', a member of the class currently being
   // defined, to 'AS'. Returns 'false' if 'Member' is not such a member.
   virtual bool SetMemberAccess(Decl *Member, AccessSpecifier AS) = 0;

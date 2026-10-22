@@ -927,6 +927,14 @@ private:
   DeclGroupPtrTy ParseExternalDeclaration(ParsedAttributes &DeclAttrs,
                                           ParsedAttributes &DeclSpecAttrs,
                                           ParsingDeclSpec *DS = nullptr);
+  DeclGroupPtrTy ParseExternalDeclarationImpl(ParsedAttributes &DeclAttrs,
+                                              ParsedAttributes &DeclSpecAttrs,
+                                              ParsingDeclSpec *DS);
+
+  /// Parses the declarations that metafunctions queued for namespace scope
+  /// after a class definition ('queue_injection_after_class'). The parsed
+  /// declarations are appended to \p Collected, if not null.
+  void ParseQueuedTrailingInjections(SmallVectorImpl<Decl *> *Collected);
 
   /// Determine whether the current token, if it occurs after a
   /// declarator, continues a declaration or declaration list.
@@ -3433,6 +3441,10 @@ private:
   void ParseQueuedMemberInjections(Decl *TagDecl, unsigned TagType,
                                    AccessSpecifier &CurAS,
                                    ParsedAttributes &AccessAttrs);
+
+  /// Enters the text of a queued injection as a token stream (followed by an
+  /// end marker and the current token) and makes its first token current.
+  void EnterInjectedTokens(const Sema::MemberInjection &Inj);
 
   /// ParseCXXMemberInitializer - Parse the brace-or-equal-initializer.
   /// Also detect and reject any attempted defaulted/deleted function

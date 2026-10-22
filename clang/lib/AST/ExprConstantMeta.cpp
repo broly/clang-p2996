@@ -650,6 +650,11 @@ static bool inject_members(APValue &Result, ASTContext &C, MetaActions &Meta,
                 QualType ResultTy, SourceRange Range, ArrayRef<Expr *> Args,
                 Decl *ContainingDecl);
 
+static bool inject_after_class(APValue &Result, ASTContext &C, MetaActions &Meta,
+                EvalFn Evaluator, DiagFn Diagnoser, bool AllowInjection,
+                QualType ResultTy, SourceRange Range, ArrayRef<Expr *> Args,
+                Decl *ContainingDecl);
+
 static bool set_member_access(APValue &Result, ASTContext &C, MetaActions &Meta,
                 EvalFn Evaluator, DiagFn Diagnoser, bool AllowInjection,
                 QualType ResultTy, SourceRange Range, ArrayRef<Expr *> Args,
@@ -1012,6 +1017,7 @@ static constexpr Metafunction Metafunctions[] = {
   { Metafunction::MFRK_bool, 2, 2, metaclass_requirement_failed },
   { Metafunction::MFRK_metaInfo, 0, 0, injection_target },
   { Metafunction::MFRK_spliceFromArg, 2, 2, spelling_of },
+  { Metafunction::MFRK_bool, 3, 3, inject_after_class },
 };
 constexpr const unsigned NumMetafunctions = sizeof(Metafunctions) /
                                             sizeof(Metafunction);
@@ -7672,6 +7678,38 @@ bool inject_members(APValue &Result, ASTContext &C, MetaActions &Meta,
                                             ? RD->getDefinition() : RD,
                                         Text, Range.getBegin()))
     return Diagnoser(Range.getBegin(), diag::metafn_injection_target_not_open)
+        << DescriptionOf(RV) << Range;
+
+  return SetAndSucceed(Result, makeBool(C, true));
+}
+
+bool inject_after_class(APValue &Result, ASTContext &C, MetaActions &Meta,
+                        EvalFn Evaluator, DiagFn Diagnoser, bool AllowInjection,
+                        QualType ResultTy, SourceRange Range,
+                        ArrayRef<Expr *> Args, Decl *ContainingDecl) {
+  assert(Args[0]->getType()->isReflectionType());
+
+  APValue RV;
+  if (!Evaluator(RV, Args[0], true))
+    return true;
+  if (!RV.isReflectedType() || !RV.getReflectedType()->isRecordType())
+    return DiagnoseReflectionKind(Diagnoser, Range, "a class type",
+                                  DescriptionOf(RV));
+
+  std::string Text;
+  if (!readCharRangeArg(Text, C, Evaluator, Args[1], Args[2]))
+    return true;
+
+  if (!AllowInjection)
+    return Diagnoser(Range.getBegin(),
+                     diag::metafn_injected_decl_non_plainly_consteval) << Range;
+
+  auto *RD = RV.getReflectedType()->getAsCXXRecordDecl();
+  if (!RD || !Meta.QueueTrailingInjection(RD->getDefinition()
+                                              ? RD->getDefinition() : RD,
+                                          Text, Range.getBegin()))
+    return Diagnoser(Range.getBegin(),
+                     diag::metafn_trailing_injection_target_invalid)
         << DescriptionOf(RV) << Range;
 
   return SetAndSucceed(Result, makeBool(C, true));
