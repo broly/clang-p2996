@@ -3455,6 +3455,16 @@ void CodeGenModule::EmitDeferred() {
       }
     }
 
+    // A decl can be queued more than once. If its definition is already
+    // emitted, skip it before asking for a "for definition" global: when the
+    // definition's type differs from the declared type (e.g. a constant
+    // initializer of a std::string with a different struct type),
+    // GetAddrOfGlobal(ForDefinition) would erase the emitted definition and
+    // leave dangling pointers (llvm.global_ctors associated data, etc.).
+    if (llvm::GlobalValue *Existing = GetGlobalValue(getMangledName(D)))
+      if (!Existing->isDeclaration())
+        continue;
+
     // We should call GetAddrOfGlobal with IsForDefinition set to true in order
     // to get GlobalValue with exactly the type we need, not something that
     // might had been created for another decl with the same mangled name but
