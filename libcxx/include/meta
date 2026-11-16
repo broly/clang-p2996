@@ -3433,7 +3433,9 @@ consteval auto pretty_printer<CharT>::tprint_impl::render() -> string_t {
     if (R == ^^long double) return string_constant("long double");
 
     if (is_unsigned_type(R)) result += string_constant("unsigned ");
-    if constexpr (!is_type_alias(R)) {
+    // make_signed(R) is an immediate invocation: it must not be instantiated for bool / floating types
+    // (they returned above, but a consteval call in a non-discarded branch of a template is evaluated eagerly)
+    if constexpr (!is_type_alias(R) && is_integral_type(R) && R != ^^bool) {
       auto U = make_signed(R);
       if (U == ^^short) return result + string_constant("short");
       if (U == ^^int) return result + string_constant("int");
